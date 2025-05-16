@@ -17,7 +17,9 @@ def configure_mock_stat_behavior(
     mock_method_to_configure: Mock,
     path_to_result_map: dict[
         Path,
-        Union[os.stat_result, Exception],  # More specific than 'object' if only these two
+        Union[
+            os.stat_result, Exception
+        ],  # More specific than 'object' if only these two
     ],
 ):
     """

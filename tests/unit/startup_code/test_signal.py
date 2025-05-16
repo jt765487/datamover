@@ -61,7 +61,7 @@ def test_handle_signal_sets_event_once_and_logs_for_known_signals(
         logging.WARNING,
         [
             f"Got {signal.Signals(initial_signal_num_to_test).name}",
-            str(initial_signal_num_to_test.value),   # use .value here
+            str(initial_signal_num_to_test.value),  # use .value here
             "initiating shutdown",
         ],
     )
@@ -124,7 +124,7 @@ def test_handle_signal_set_raises_exception_logs_exception(
     context, mock_event = make_context(side_effects=[False], set_exc=exception_to_raise)
     caplog.set_level(logging.ERROR)
     test_signal_num = signal.SIGINT
-    test_signal_name = signal.Signals(test_signal_num).name
+    _test_signal_name = signal.Signals(test_signal_num).name
 
     handle_signal(context, test_signal_num, _frame=None)
 
@@ -134,7 +134,7 @@ def test_handle_signal_set_raises_exception_logs_exception(
         logging.ERROR,
         [
             f"Error setting shutdown_event for {signal.Signals(test_signal_num).name}",
-            str(test_signal_num.value),            # and here
+            str(test_signal_num.value),  # and here
         ],
     )
     assert record is not None, "Expected error log when event.set() fails not found."
