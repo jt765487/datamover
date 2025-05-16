@@ -618,5 +618,5 @@ def test_get_int_option_validations():
         _get_int_option(cp, "TestInt", "too_high", max_value=50)
     with pytest.raises(ConfigError, match="missing option 'non_existent'"):
         _get_int_option(cp, "TestInt", "non_existent")
-    with pytest.raises(ConfigError, match="'empty_val' .* must be an integer"): # Error for empty string when parsing as int
+    with pytest.raises(ConfigError, match="'empty_val' .* must be an integer"):
         _get_int_option(cp, "TestInt", "empty_val")
