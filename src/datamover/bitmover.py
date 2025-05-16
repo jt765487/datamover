@@ -29,6 +29,7 @@ def main_entrypoint():
     """
     Main function to initialize and run the application.
     """
+
     # 0. Platform Check
     if platform.system() != "Linux":
         # This is a fundamental requirement. No logging yet.
@@ -201,6 +202,6 @@ def main_entrypoint():
         sys.exit(EX_SOFTWARE)  # General internal software error
 
 
-# Guard for execution
-if __name__ == "__main__":
+def main() -> None:
+    """Invoke the main application logic."""
     main_entrypoint()
