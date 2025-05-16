@@ -44,7 +44,7 @@ class LineParsingHashError(LineParsingError):
 
 
 # --- Dataclass  ---
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ParsedLine:
     """Represents a successfully parsed log line with immutable fields."""
 

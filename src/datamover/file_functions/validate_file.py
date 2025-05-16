@@ -1,6 +1,7 @@
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 
 from datamover.file_functions.fs_mock import FS
 from datamover.file_functions.safe_stat import safe_stat
@@ -12,7 +13,7 @@ def validate_file(
     source_path_input: Path,
     expected_source_dir: Path,
     fs: FS,
-) -> Path | None:
+) -> Optional[Path]:
     """
     Validates a source file path against configured expectations using FS object.
 
@@ -30,7 +31,7 @@ def validate_file(
         The *resolved* absolute Path object if validation passes, None otherwise.
     """
     # --- Initial Checks via safe_stat (which uses fs.lstat) ---
-    stat_info: tuple[int, int] | None = safe_stat(source_path_input, fs=fs)
+    stat_info: Optional[tuple[int, int]] = safe_stat(source_path_input, fs=fs)
     if stat_info is None:
         logger.error(
             "Validation failed: Initial checks via safe_stat failed for '%s'. See prior logs.",

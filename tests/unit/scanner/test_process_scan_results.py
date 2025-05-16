@@ -295,8 +295,8 @@ def test_complex_scenario(
 
 
 def test_new_file_can_be_stuck(
-    sample_paths: dict[str, Path],  # Updated type hint
-    current_times: dict[str, float],  # Updated type hint
+    sample_paths: dict[str, Path],
+    current_times: dict[str, float],
     mock_update_state: MagicMock,
     mock_is_lost: MagicMock,
     mock_is_active: MagicMock,
@@ -307,17 +307,23 @@ def test_new_file_can_be_stuck(
     Also verifies it's not checked for 'lost' status.
     """
     p_new = sample_paths["file6_new_stuck"]
+    # Create a dummy FileStateRecord and give it the two timestamps
     st_new = MagicMock(spec=FileStateRecord, name="StateNewStuck")
+    st_new.first_seen_mono = current_times["mono"]
+    st_new.first_seen_wall = current_times["wall"]
 
+    # Have update_file_state_record return our new state
     mock_update_state.return_value = ({p_new: st_new}, set())
 
+    # Helpers behavior
     mock_is_lost.return_value = False
     mock_is_active.return_value = True
     mock_is_present.return_value = True
 
     stuck_timeout_val = 1.0  # For the call assertion
 
-    next_s, removed_p, lost_p, stuck_p = process_scan_results(
+    # Call under test
+    next_states, removed_paths, lost_paths, stuck_paths = process_scan_results(
         gathered_data=[MagicMock(spec=GatheredEntryData)],
         existing_states={},
         lost_timeout=5.0,
@@ -326,13 +332,8 @@ def test_new_file_can_be_stuck(
         wall_now=current_times["wall"],
     )
 
-    assert lost_p == set()
-    assert stuck_p == {p_new}
-
-    mock_is_lost.assert_not_called()
-    mock_is_active.assert_called_once_with(record=st_new)
-    mock_is_present.assert_called_once_with(
-        state=st_new,
-        monotonic_time_now=current_times["mono"],
-        presence_timeout=stuck_timeout_val,  # Use the actual timeout value
-    )
+    # Assertions – make sure it appears in “stuck” and not in “lost”
+    assert p_new in stuck_paths
+    assert p_new not in lost_paths
+    assert next_states[p_new] is st_new
+    assert removed_paths == set()

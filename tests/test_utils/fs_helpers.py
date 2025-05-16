@@ -3,6 +3,7 @@ import os
 import stat
 import time
 from pathlib import Path
+from typing import Optional, Union
 from unittest.mock import Mock, MagicMock
 
 import pytest
@@ -16,7 +17,7 @@ def configure_mock_stat_behavior(
     mock_method_to_configure: Mock,
     path_to_result_map: dict[
         Path,
-        os.stat_result | Exception,  # More specific than 'object' if only these two
+        Union[os.stat_result, Exception],  # More specific than 'object' if only these two
     ],
 ):
     """
@@ -83,11 +84,11 @@ def create_mock_stat_attrs(
     st_size: int = 1024,
     st_dev: int = 10,
     st_nlink: int = 1,
-    st_uid: int | None = None,  # Allow None to use sensible defaults
-    st_gid: int | None = None,  # Allow None to use sensible defaults
-    st_atime: float | None = None,
-    st_mtime: float | None = None,
-    st_ctime: float | None = None,
+    st_uid: Optional[int] = None,  # Allow None to use sensible defaults
+    st_gid: Optional[int] = None,  # Allow None to use sensible defaults
+    st_atime: Optional[float] = None,
+    st_mtime: Optional[float] = None,
+    st_ctime: Optional[float] = None,
 ) -> MagicMock:  # Returns MagicMock spec'd to os.stat_result
     """
     Creates a MagicMock object simulating os.stat_result with configurable attributes.

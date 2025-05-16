@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class FileStateRecord:
     """
     An immutable record representing the observed state of a file at a specific

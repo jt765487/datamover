@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Optional
 
 from datamover.file_functions.fs_mock import FS
 
@@ -11,7 +12,7 @@ def find_available_target_path(
     base_path: Path,
     limit: int = 100,
     fs: FS,
-) -> Path | None:
+) -> Optional[Path]:
     """
     Finds an available target path by appending '-N' if variants exist.
 

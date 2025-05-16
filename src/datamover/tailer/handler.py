@@ -2,7 +2,7 @@ import logging
 from os import fsdecode
 from pathlib import Path
 from queue import Queue
-from typing import Optional
+from typing import Optional, Union
 
 from watchdog.events import (
     FileCreatedEvent,
@@ -129,7 +129,7 @@ class MappingEventHandler(FileSystemEventHandler):
             return False
         return True
 
-    def on_created(self, event: FileCreatedEvent | DirCreatedEvent) -> None:
+    def on_created(self, event: Union[FileCreatedEvent, DirCreatedEvent]) -> None:
         super().on_created(event)
         if event.is_directory:
             logger.debug("Ignoring directory creation: %s", event.src_path)
@@ -142,7 +142,7 @@ class MappingEventHandler(FileSystemEventHandler):
         event_object = CreatedEvent(path=src_path_str)
         self._safe_enqueue(event_object)
 
-    def on_modified(self, event: FileModifiedEvent | DirModifiedEvent) -> None:
+    def on_modified(self, event: Union[FileModifiedEvent, DirModifiedEvent]) -> None:
         super().on_modified(event)
         if event.is_directory:
             logger.debug("Ignoring directory modification: %s", event.src_path)
@@ -163,7 +163,7 @@ class MappingEventHandler(FileSystemEventHandler):
             modified_event_object = ModifiedEvent(path=src_path_str)
             self._safe_enqueue(modified_event_object)
 
-    def on_deleted(self, event: FileDeletedEvent | DirDeletedEvent) -> None:
+    def on_deleted(self, event: Union[FileDeletedEvent, DirDeletedEvent]) -> None:
         super().on_deleted(event)
         if event.is_directory:
             logger.debug("Ignoring directory deletion: %s", event.src_path)
@@ -186,7 +186,7 @@ class MappingEventHandler(FileSystemEventHandler):
         event_object = DeletedEvent(path=src_path_str)
         self._safe_enqueue(event_object)
 
-    def on_moved(self, event: FileMovedEvent | DirMovedEvent) -> None:
+    def on_moved(self, event: Union[FileMovedEvent, DirMovedEvent]) -> None:
         super().on_moved(event)
         if event.is_directory:
             logger.debug(

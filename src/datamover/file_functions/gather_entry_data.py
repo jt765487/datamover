@@ -9,7 +9,7 @@ from datamover.file_functions.fs_mock import FS
 logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True, frozen=True, order=True)
+@dataclass(frozen=True, order=True)
 class GatheredEntryData:
     """
     Holds essential stat info for successfully processed regular files.

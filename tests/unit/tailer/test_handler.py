@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 from queue import Queue
+from typing import Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -77,10 +78,10 @@ def handler_factory(
 
     def _make(
         ext: str = EXT,
-        initial_paths: set[Path] | None = None,
-        timeout: float | None = TIMEOUT,
-        fs_override: MagicMock | None = None,
-        watched_dir_override: Path | None = None,
+        initial_paths: Optional[set[Path]] = None,
+        timeout: Optional[float] = TIMEOUT,
+        fs_override: Optional[MagicMock] = None,
+        watched_dir_override: Optional[Path] = None,
     ) -> tuple[MappingEventHandler, set[str], MagicMock, Path]:
         current_fs = fs_override if fs_override is not None else mock_fs
         # If watched_dir_override is None, use tmp_path directly as the watched dir.
@@ -257,7 +258,7 @@ def test_is_path_within_monitored_directory(
     tmp_path: Path,
     relative_path_str: str,
     expected_result: bool,
-    fs_resolve_error: Exception | None,
+    fs_resolve_error: Optional[Exception],
 ):
     """Test logic for checking if a path is directly within the monitored directory."""
     caplog.set_level(logging.DEBUG, logger=LOGGER)
@@ -334,7 +335,7 @@ def test_should_process_file(
     filename: str,
     location_type: str,
     expected_processing: bool,
-    expected_log_substring_parts: list[str] | None,
+    expected_log_substring_parts: Optional[list[str]],
 ):
     """Test the logic for deciding whether a file event should be processed."""
     caplog.set_level(logging.DEBUG, logger=LOGGER)

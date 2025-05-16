@@ -2,6 +2,7 @@ import logging
 import os
 import stat
 from pathlib import Path
+from typing import Optional
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -34,9 +35,9 @@ def make_mock_dir_entry(
     is_file_result: bool = True,
     is_dir_result: bool = False,  # Added is_dir_result
     is_symlink_result: bool = False,  # Added is_symlink_result
-    stat_result: os.stat_result | None = None,
-    side_effect_is_file: Exception | None = None,
-    side_effect_stat: Exception | None = None,
+    stat_result: Optional[os.stat_result] = None,
+    side_effect_is_file: Optional[Exception] = None,
+    side_effect_stat: Optional[Exception] = None,
 ) -> MagicMock:
     """Creates a mock os.DirEntry object."""
     entry = MagicMock(spec=os.DirEntry)

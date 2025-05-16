@@ -4,7 +4,7 @@ from configparser import MissingSectionHeaderError, ParsingError, ConfigParser
 import pytest
 
 from datamover.file_functions.fs_mock import FS
-from datamover.startup_code.load_config import load_config, ConfigError, Config
+from datamover.startup_code.load_config import load_config, ConfigError
 
 VALID_INI = """
 [Directories]
@@ -462,7 +462,6 @@ def test_load_config_unicode_decode_error(tmp_path):
     assert "codec can't decode byte" in str(exc.value)
 
 
-from configparser import MissingSectionHeaderError, ParsingError # Already imported
 
 @pytest.mark.parametrize(
     "malformed_ini_content, expected_exception_type",

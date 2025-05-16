@@ -1,12 +1,14 @@
 import logging
+from typing import Optional
+
 import pytest
 
 
 def find_log_record(
     caplog: pytest.LogCaptureFixture,
     level: int,
-    required_substrings: list[str] | None = None,
-) -> logging.LogRecord | None:
+    required_substrings: Optional[list[str]] = None,
+) -> Optional[logging.LogRecord]:
     """
     Finds the first log record matching the specified level and containing
     all required substrings in its message.

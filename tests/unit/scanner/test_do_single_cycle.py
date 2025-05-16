@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 from queue import Queue
+from typing import Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -419,7 +420,7 @@ def test_process_one_cycle_safe_put_fails_in_enqueue_loop(
     put_side_effect_exception: Exception,
     expected_log_level: int,
     log_msg_main_part: str,
-    check_exc_info_type: type[Exception] | None,
+    check_exc_info_type: Optional[type[Exception]],
 ):
     """Tests error logging when safe_put fails during the enqueue loop."""
     caplog.set_level(logging.DEBUG)

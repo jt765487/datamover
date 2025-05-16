@@ -60,13 +60,13 @@ def test_handle_signal_sets_event_once_and_logs_for_known_signals(
         caplog,
         logging.WARNING,
         [
-            f"Got {initial_signal_name}",
-            str(initial_signal_num_to_test),
+            f"Got {signal.Signals(initial_signal_num_to_test).name}",
+            str(initial_signal_num_to_test.value),   # use .value here
             "initiating shutdown",
         ],
     )
     assert record is not None, (
-        f"Warning log for initial signal {initial_signal_name} not found."
+        f"Warning log for initial signal {signal.Signals(initial_signal_num_to_test).name} not found."
     )
 
     # Arrange - Second call (with the *other* signal, event is now "set")
@@ -132,7 +132,10 @@ def test_handle_signal_set_raises_exception_logs_exception(
     record = find_log_record(
         caplog,
         logging.ERROR,
-        [f"Error setting shutdown_event for {test_signal_name}", str(test_signal_num)],
+        [
+            f"Error setting shutdown_event for {signal.Signals(test_signal_num).name}",
+            str(test_signal_num.value),            # and here
+        ],
     )
     assert record is not None, "Expected error log when event.set() fails not found."
     assert record.exc_info is not None, "Exception info should be logged."

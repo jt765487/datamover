@@ -6,6 +6,7 @@ from configparser import (
 )
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional, Union
 
 from datamover.file_functions.fs_mock import FS
 
@@ -81,8 +82,8 @@ def _get_int_option(
     cp: ConfigParser,
     section: str,
     option: str,
-    min_value: int | None = None,
-    max_value: int | None = None,
+    min_value: Optional[int] = None,
+    max_value: Optional[int] = None,
 ) -> int:
     if not cp.has_option(section, option):
         raise ConfigError(f"[{section}] missing option '{option}'")
@@ -106,8 +107,8 @@ def _get_float_option(
     cp: ConfigParser,
     section: str,
     option: str,
-    min_value: float | None = None,
-    max_value: float | None = None,
+    min_value: Optional[float] = None,
+    max_value: Optional[float] = None,
 ) -> float:
     if not cp.has_option(section, option):
         raise ConfigError(f"[{section}] missing option '{option}'")
@@ -265,7 +266,7 @@ def _parse_uploader_config(
     )
 
 
-def load_config(path: str | Path, fs: FS = FS()) -> Config:
+def load_config(path: Union[str, Path], fs: FS = FS()) -> Config:
     """Loads, parses, and validates configuration from an INI file."""
     config_path = Path(path)
     try:

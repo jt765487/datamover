@@ -2,6 +2,7 @@ import logging
 import stat
 import os
 from pathlib import Path
+from typing import Optional
 
 from datamover.file_functions.fs_mock import FS
 
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 def safe_stat(
     path: Path,
     fs: FS,
-) -> tuple[int, int] | None:
+) -> Optional[tuple[int, int]]:
     """
     Safely get inode and size IF the path points DIRECTLY to a regular file.
 
@@ -25,7 +26,6 @@ def safe_stat(
 
     Returns:
         Tuple (inode, size) if path is a regular file, None otherwise.
-        (Type hinted as tuple[int, int] | None)
     """
     try:
         # Use lstat to get info about the entry itself (symlink or file/dir etc.)

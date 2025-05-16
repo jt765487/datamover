@@ -1,5 +1,7 @@
 import logging
 from pathlib import Path
+from typing import Optional
+
 import pytest
 from unittest.mock import Mock
 
@@ -134,7 +136,7 @@ def test_returns_empty_list_scenarios(
     caplog: pytest.LogCaptureFixture,
     mock_scan_directory: Path,
     mock_fs: Mock,  # Injected from conftest.py
-    gather_return_value_fixture: str | None,  # Fixture name as string, or None
+    gather_return_value_fixture: Optional[str],  # Fixture name as string, or None
     input_extension: str,
     description_id: str,
     request,  # Pytest request fixture to dynamically get other fixtures
