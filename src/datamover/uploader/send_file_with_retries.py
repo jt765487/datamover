@@ -5,8 +5,8 @@ from typing import Union, Optional
 
 import requests.exceptions
 
-from src.datamover.file_functions.fs_mock import FS
-from src.datamover.protocols import SafeFileMover, HttpResponse, HttpClient
+from datamover.file_functions.fs_mock import FS
+from datamover.protocols import SafeFileMover, HttpResponse, HttpClient
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+# -----------------------
+# Logging helpers
+# -----------------------
+_ts()   { date -u +'%Y-%m-%dT%H:%M:%SZ'; }
+info()  { echo "$(_ts) [INFO]  $*"; }
+warn()  { echo "$(_ts) [WARN]  $*"; }
+error_exit() { echo "$(_ts) [ERROR] $*" >&2; exit 1; }
+
+# -----------------------
+# Defaults & Configurable
+# -----------------------
+CONFIG="install-app.conf"       # path to config file
+DRY_RUN=""                      # set to 'echo' for dry-run
+
+# Variables overridden by $CONFIG
+APP_NAME=""                     # REQUIRED
+USER_CONFIG=""                  # optional override
+GROUP_CONFIG=""                 # optional override
+BASE_DIR_CONFIG=""              # optional override
+SYSTEMD_TEMPLATES="systemd_units"
+COMMON_CONFIGS="config_files"
+
+# -----------------------
+# Usage
+# -----------------------
+usage() {
+  cat <<EOF
+Usage: $0 [-c config.conf] [-n] [-h]
+
+  -c  Path to config file (default: ${CONFIG})
+  -n  Dry-run mode (echo commands instead of running)
+  -h  Show this help and exit
+
+Example install-app.conf:
+
+  APP_NAME="exportcliv2"            # REQUIRED
+  USER_CONFIG="my_export_user"      # default: \${APP_NAME}_user
+  GROUP_CONFIG="my_export_group"    # default: \${APP_NAME}_group
+  BASE_DIR_CONFIG="/srv/export"     # default: /opt/\${APP_NAME}
+  SYSTEMD_TEMPLATES="my_units"      # relative to script dir
+  COMMON_CONFIGS="common_configs"   # relative to script dir
+EOF
+  exit 1
+}
+
+# -----------------------
+# Arg Parsing
+# -----------------------
+while getopts "c:nh" opt; do
+  case $opt in
+    c) CONFIG="$OPTARG" ;;
+    n) DRY_RUN="echo"  ;;
+    h) usage           ;;
+    *) usage           ;;
+  esac
+done
+
+# -----------------------
+# Locate script dir & load config
+# -----------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$CONFIG" ]]; then
+  # shellcheck source=/dev/null
+  source "$CONFIG"
+else
+  warn "Config '$CONFIG' not found; using defaults"
+fi
+
+# -----------------------
+# Validate & derive
+# -----------------------
+[[ -n "$APP_NAME" ]] || error_exit "APP_NAME must be set in $CONFIG"
+
+APP_USER=${USER_CONFIG:-${APP_NAME}_user}
+APP_GROUP=${GROUP_CONFIG:-${APP_NAME}_group}
+BASE_DIR=${BASE_DIR_CONFIG:-/opt/${APP_NAME}}
+
+ETC_DIR="/etc/${APP_NAME}"
+TARGET_BINARY_PATH="${BASE_DIR}/bin/${APP_NAME}"
+SOURCE_DATA_DIR="${BASE_DIR}/source"
+CSV_DATA_DIR="${BASE_DIR}/csv"
+
+# -----------------------
+# Prerequisites
+# -----------------------
+for cmd in getent groupadd useradd install sed systemctl mkdir; do
+  command -v "$cmd" >/dev/null 2>&1 \
+    || error_exit "Required command '$cmd' not found"
+done
+
+# -----------------------
+# Helpers
+# -----------------------
+
+create_group() {
+  if getent group "$1" >/dev/null; then
+    info "Group '$1' already exists"
+  else
+    info "Creating group '$1'"
+    $DRY_RUN groupadd -r "$1"
+  fi
+}
+
+create_user() {
+  if getent passwd "$1" >/dev/null; then
+    info "User '$1' already exists"
+  else
+    info "Creating user '$1'"
+    $DRY_RUN useradd -r -g "$2" -d "$3" -s /sbin/nologin "$1"
+  fi
+}
+
+install_dirs() {
+  # args: owner, group, dir...
+  local owner=$1 group=$2; shift 2
+  for d in "$@"; do
+    info "Ensuring directory '$d' owned $owner:$group"
+    $DRY_RUN install -d -o "$owner" -g "$group" -m 0750 "$d"
+  done
+}
+
+copy_binary() {
+  # args: src_path, dest_path
+  local src=$1 dst=$2
+  info "Installing binary from '$src' to '$dst'" # Added source path to info
+  # Set owner to root, group to APP_GROUP, and mode to 0750 (rwxr-x---)
+  $DRY_RUN install -T -o root -g "$APP_GROUP" -m0750 "$src" "$dst" # MODIFIED
+}
+
+deploy_units() {
+  info "Deploying systemd units from '${SYSTEMD_TEMPLATES}'"
+  $DRY_RUN mkdir -p /etc/systemd/system
+  local sed_args=(
+    -e "s|{{APP_NAME}}|${APP_NAME}|g"
+    -e "s|{{APP_USER}}|${APP_USER}|g"
+    -e "s|{{APP_GROUP}}|${APP_GROUP}|g"
+    -e "s|{{BASE_DIR}}|${BASE_DIR}|g"
+    -e "s|{{ETC_DIR}}|${ETC_DIR}|g"
+    -e "s|{{TARGET_BINARY_PATH}}|${TARGET_BINARY_PATH}|g"
+    -e "s|{{SOURCE_DATA_DIR}}|${SOURCE_DATA_DIR}|g"
+    -e "s|{{CSV_DATA_DIR}}|${CSV_DATA_DIR}|g"
+  )
+  for tpl in "${SCRIPT_DIR}/${SYSTEMD_TEMPLATES}"/*.template; do
+    [[ -e "$tpl" ]] || continue
+    out="/etc/systemd/system/$(basename "${tpl%.template}")"
+    info "  → $out"
+    $DRY_RUN sed "${sed_args[@]}" "$tpl" >"$out"
+  done
+  info "Reloading systemd daemon"
+  $DRY_RUN systemctl daemon-reload
+}
+
+deploy_common_configs() {
+  local src="${SCRIPT_DIR}/${COMMON_CONFIGS}"
+  [[ -d "$src" ]] || return
+  info "Deploying common configs from '$src'"
+  $DRY_RUN install -d -o root -g root -m0755 "$ETC_DIR"
+  for cfg in "$src"/*; do
+    [[ -f "$cfg" ]] || continue
+    tgt="${ETC_DIR}/$(basename "$cfg")"
+    info "  → $tgt"
+    $DRY_RUN install -T -o root -g "$APP_GROUP" -m0640 "$cfg" "$tgt"
+  done
+}
+
+save_base_vars() {
+  local file="/etc/default/${APP_NAME}_base_vars"
+  info "Writing base-vars file to '$file'"
+  read -r -d '' content <<EOF || true
+# Base variables for ${APP_NAME} instances
+# Generated by $0 on $(_ts)
+export APP_NAME="${APP_NAME}"
+export APP_USER="${APP_USER}"
+export APP_GROUP="${APP_GROUP}"
+export BASE_DIR="${BASE_DIR}"
+export TARGET_BINARY_PATH="${TARGET_BINARY_PATH}"
+export SOURCE_DATA_DIR="${SOURCE_DATA_DIR}"
+export CSV_DATA_DIR="${CSV_DATA_DIR}"
+export ETC_DIR="${ETC_DIR}"
+EOF
+  if [[ -n "$DRY_RUN" ]]; then
+    echo "[DRY_RUN] would write:"
+    echo "$content"
+  else
+    mkdir -p "$(dirname "$file")"
+    printf "%s\n" "$content" >"$file"
+    chmod 0644 "$file"
+  fi
+}
+
+# -----------------------
+# Main
+# -----------------------
+main() {
+  info "Installing '${APP_NAME}' into '${BASE_DIR}'"
+
+  create_group "$APP_GROUP"
+  create_user  "$APP_USER" "$APP_GROUP" "$BASE_DIR"
+
+  install_dirs root root "$ETC_DIR"
+  install_dirs "$APP_USER" "$APP_GROUP" \
+               "${BASE_DIR}/bin" \
+               "${SOURCE_DATA_DIR}" \
+               "${CSV_DATA_DIR}"
+
+  copy_binary "${SCRIPT_DIR}/${APP_NAME}" "$TARGET_BINARY_PATH"
+  deploy_units
+  deploy_common_configs
+  save_base_vars
+
+  info "Installation complete."
+}
+
+main

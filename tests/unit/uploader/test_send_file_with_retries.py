@@ -6,8 +6,8 @@ import pytest
 import requests
 
 # Import the SUT
-from src.datamover.uploader.send_file_with_retries import RetryableFileSender
-from src.datamover.protocols import HttpResponse
+from datamover.uploader.send_file_with_retries import RetryableFileSender
+from datamover.protocols import HttpResponse
 
 # Log helper
 from tests.test_utils.logging_helpers import find_log_record

@@ -7,7 +7,7 @@ authors = [
     { name = "jathorp", email = "jat1963@icloud.com" }
 ]
 
-requires-python = "==3.9.21"
+requires-python = "~=3.9.0"
 
 dependencies = [
     "requests>=2.32.3",
