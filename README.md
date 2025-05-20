@@ -50,7 +50,7 @@ This system consists of multiple instances of an **External Data Generator** app
     * `[Mover]`: *(Corresponds to the `FileMoveThread`)*
         * `move_poll_interval_seconds`: Polling interval for the `FileMoveThread` when getting items from the `move_queue`.
     * `[Scanner]`:
-        * `scanner_check_seconds`: How often the Source Directory scan runs. *(Note: INI file example uses `scaner_check_seconds` which is a typo).*
+        * `scanner_check_seconds`: How often the Source Directory scan runs. *(Note: INI file example uses `scanner_check_seconds` which is a typo).*
         * `lost_timeout_seconds`: Threshold for marking a file as "lost".
         * `stuck_active_file_timeout_seconds`: Threshold for marking a file as potentially "stuck" (must be > `lost_timeout_seconds`).
     * `[Tailer]`: *(Relates to the `TailConsumerThread` polling the `tailer_queue`)*

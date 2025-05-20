@@ -43,7 +43,7 @@ Test Scope & Interactions:
     -   The application runs with a real `Config` object, where crucial paths
       point to these temporary directories, and `remote_host_url` points to
       the local `pytest-httpserver`.
-    -   Scanner timeouts (`lost_timeout_seconds`, `scaner_check_seconds`) in the
+    -   Scanner timeouts (`lost_timeout_seconds`, `scanner_check_seconds`) in the
       test `Config` are set to short, testable durations.
 
 Key Components & Their Test Status (Real vs. Mocked):
@@ -145,7 +145,7 @@ class TestAppScannerLostFiles:
 
         # Calculate a timeout for waiting for the file to be processed.
         # This needs to be long enough for:
-        # 1. The scanner to run (controlled by scaner_check_seconds).
+        # 1. The scanner to run (controlled by scanner_check_seconds).
         # 2. The file's mtime to be older than lost_timeout_seconds.
         # 3. The scanner to identify it as lost and queue it.
         # 4. The file_mover to pick it up (move_poll_interval_seconds).
@@ -162,7 +162,7 @@ class TestAppScannerLostFiles:
         test_logger.info(
             f"Waiting up to {processing_timeout:.1f}s for lost file processing "
             f"(lost_timeout_seconds: {env.config.lost_timeout_seconds}, "
-            f"scaner_check_seconds: {env.config.scanner_check_seconds})"  # Note: "scaner"
+            f"scanner_check_seconds: {env.config.scanner_check_seconds})"
         )
 
         # Wait for the file to appear in the uploaded directory

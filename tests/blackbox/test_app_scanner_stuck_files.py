@@ -96,7 +96,7 @@ class TestAppScannerStuckAndLostFiles:
         # Get critical timeouts from the test environment's config
         scan_interval = (
             env.config.scanner_check_seconds
-        )  # Note "scaner" typo if still in Config
+        )
         stuck_timeout = env.config.stuck_active_file_timeout_seconds
         lost_timeout = env.config.lost_timeout_seconds
 

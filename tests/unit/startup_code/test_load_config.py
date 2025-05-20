@@ -19,7 +19,7 @@ csv_extension_no_dot = csv
 move_poll_interval_seconds = 1.5
 
 [Scanner]
-scaner_check_seconds = 2.0
+scanner_check_seconds = 2.0
 lost_timeout_seconds = 3.0
 stuck_active_file_timeout_seconds = 4.0
 
@@ -164,7 +164,7 @@ def test_config_path_not_a_file(tmp_path):
         ("Files", "pcap_extension_no_dot"),
         ("Files", "csv_extension_no_dot"),
         ("Mover", "move_poll_interval_seconds"),
-        ("Scanner", "scaner_check_seconds"),
+        ("Scanner", "scanner_check_seconds"),
         ("Scanner", "lost_timeout_seconds"),
         ("Scanner", "stuck_active_file_timeout_seconds"),
         ("Tailer", "event_queue_poll_timeout_seconds"),
@@ -454,7 +454,7 @@ def test_bad_file_extensions(
     "section,key,bad_value,min_value_text_for_msg",  # min_value_text_for_msg used for error string
     [
         ("Mover", "move_poll_interval_seconds", "-1.0", "0.0"),
-        ("Scanner", "scaner_check_seconds", "0.5", "1.0"),
+        ("Scanner", "scanner_check_seconds", "0.5", "1.0"),
         ("Scanner", "lost_timeout_seconds", "0", "1.0"),
         ("Scanner", "stuck_active_file_timeout_seconds", "-5", "1.0"),
         ("Tailer", "event_queue_poll_timeout_seconds", "-0.1", "0.0"),

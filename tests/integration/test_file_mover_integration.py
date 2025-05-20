@@ -72,7 +72,7 @@ def file_mover_test_env(
         pcap_extension_no_dot="pcap",
         csv_extension_no_dot="csv",
         move_poll_interval_seconds=0.05,  # Short for responsive testing
-        # scaner_check_seconds is critical: ensure this matches your Config class definition
+        # scanner_check_seconds is critical: ensure this matches your Config class definition
         # If your Config class expects 'scanner_check_seconds', change it here.
         scanner_check_seconds=1.0,  # Less critical for isolated mover test, but must be valid
         lost_timeout_seconds=30,  # Must be < stuck_active_file_timeout_seconds

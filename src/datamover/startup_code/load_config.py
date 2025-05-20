@@ -209,9 +209,8 @@ def _parse_mover_config(cp: ConfigParser) -> float:
 def _parse_scanner_config(
     cp: ConfigParser,
 ) -> tuple[float, float, float]:  # Return types changed to float
-    # Typo "scaner_check_seconds" is intentional to match an INI file
     scan_check_s = _get_float_option(
-        cp, "Scanner", "scaner_check_seconds", min_value=1.0
+        cp, "Scanner", "scanner_check_seconds", min_value=1.0
     )  # Changed to float
     lost_timeout_s = _get_float_option(
         cp, "Scanner", "lost_timeout_seconds", min_value=1.0

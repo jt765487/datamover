@@ -1,20 +1,14 @@
 # ----------------------------------------------------------
-# Configuration File for the PCAP Uploader Service
+# Configuration File for the PCAP Uploader Service (bitmover)
+# Templated by base installer
 # ----------------------------------------------------------
-# Edit the values below as needed.
-# Lines starting with '#' or ';' are comments and are ignored.
 
 [Directories]
 # All directories must be on the same file system.
-
-# Base directory for PCAP files and CSV manifests. All other directories are relative to this.
-# We will create 'source', 'worker', 'uploaded' and 'dead_letter' directory's under this base directory.
-# We will also create a 'csv' directory under this base directory to hold the CSV manifest files.
-base_dir = /var/tmp/MOVE
+base_dir = {{BASE_DIR}}
 
 # Directory to put log files in. This directory must exist.
-logger_dir = /var/tmp/MOVE/logs
-
+logger_dir = {{BITMOVER_LOG_DIR}}
 
 [Files]
 # The file extension to look for for pcap files when scanning the source directory.
@@ -23,12 +17,10 @@ pcap_extension_no_dot = pcap
 # The file extension to look for when scanning the source directory for CSV files.
 csv_extension_no_dot = csv
 
-
 [Mover]
 # How often (in seconds) to check the queue for files to move from the source directory to the worker directory.
 # Leave at the default of 0.5 seconds.
 move_poll_interval_seconds = 0.5
-
 
 [Scanner]
 # The stuck_active_file_timeout_seconds must be greater than the lost_timeout_seconds.
@@ -42,11 +34,9 @@ lost_timeout_seconds = 120.0
 # How long (in seconds) to wait for a file to be considered "broken" (e.g., if it is still being written to).
 stuck_active_file_timeout_seconds = 180.0
 
-
 [Tailer]
 # How often (in seconds) to check the exit - leave at the default ofd 0.5 seconds.
 event_queue_poll_timeout_seconds = 0.5
-
 
 [Uploader]
 # How often (in seconds) to check the queue for files to upload from the worker directory.
@@ -56,8 +46,7 @@ uploader_poll_interval_seconds = 0.5
 heartbeat_target_interval_s = 60.0
 
 # Full URL of the remote endpoint for uploading PCAP files
-# Example: http://your-server-address:port/path
-remote_host_url = http://192.168.0.180:8989/pcap
+remote_host_url = {{REMOTE_HOST_URL}}
 
 # How long (in seconds) to wait for the server to respond during upload
 request_timeout = 30.0
