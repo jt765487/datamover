@@ -1,0 +1,36 @@
+[Unit]
+Description=Bitmover - PCAP Upload Service for {{APP_NAME}}
+After=network-online.target
+Wants=network-online.target
+
+# Crash loop protection: stop trying if it fails too often (DM-NFR-001)
+# Example: no more than 5 restarts in 5 minutes (300 seconds)
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+User={{APP_USER}}
+Group={{APP_GROUP}}
+UMask=0027
+
+# Path to the bitmover executable within the venv
+ExecStart={{PYTHON_VENV_PATH}}/bin/bitmover --config {{BITMOVER_CONFIG_FILE}}
+
+# Set PYTHONUNBUFFERED=1 to ensure Python's output (especially logging)
+Environment="PYTHONUNBUFFERED=1"
+
+# EX_USAGE (64) for command line usage error
+# EX_CONFIG (78) for configuration error
+Restart=on-failure
+RestartSec=10s
+RestartPreventExitStatus=64 78
+
+# Logging configuration: send stdout/stderr to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bitmover
+
+[Install]
+WantedBy=multi-user.target

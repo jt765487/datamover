@@ -1,0 +1,44 @@
+[Unit]
+Description={{APP_NAME}} instance %I
+After=network-online.target
+Wants=network-online.target
+
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+User={{APP_USER}}
+Group={{APP_GROUP}}
+UMask=0027
+WorkingDirectory={{BASE_DIR}}
+
+# Remove any existing restart trigger file before starting
+ExecStartPre=-/usr/bin/rm -f {{CSV_DATA_DIR}}/%i.restart
+
+# Check if the required directories are present and writable
+ExecStartPre=/usr/bin/test -d {{SOURCE_DATA_DIR}} -a -w {{SOURCE_DATA_DIR}}
+ExecStartPre=/usr/bin/test -d {{CSV_DATA_DIR}} -a -w {{CSV_DATA_DIR}}
+
+EnvironmentFile={{ETC_DIR}}/%i.conf
+EnvironmentFile={{ETC_DIR}}/common.auth.conf
+
+ExecStart={{TARGET_BINARY_PATH}} \
+    -u "${EXPORT_AUTH_TOKEN_U}" \
+    -p "${EXPORT_AUTH_TOKEN_P}" \
+    -t "${EXPORT_TIMEOUT}" \
+    -H {{CSV_DATA_DIR}} \
+    -o \
+    {{SOURCE_DATA_DIR}}/"${EXPORT_SOURCE}" \
+    "${EXPORT_IP}" \
+    "${EXPORT_PORTID}" \
+    "${EXPORT_STARTTIME}" \
+    "${EXPORT_ENDTIME}"
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{APP_NAME}}@%i
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
