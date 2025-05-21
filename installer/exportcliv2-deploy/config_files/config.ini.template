@@ -35,7 +35,7 @@ lost_timeout_seconds = 120.0
 stuck_active_file_timeout_seconds = 180.0
 
 [Tailer]
-# How often (in seconds) to check the exit - leave at the default ofd 0.5 seconds.
+# How often (in seconds) to check the exit - leave at the default of 0.5 seconds.
 event_queue_poll_timeout_seconds = 0.5
 
 [Uploader]

@@ -120,6 +120,12 @@ WHEEL_PATH="${SCRIPT_DIR}/${DATAMOVER_WHEEL_NAME}"
 
 SOURCE_DATA_DIR="${BASE_DIR}/source"
 CSV_DATA_DIR="${BASE_DIR}/csv"
+# ---- MODIFICATION: Define additional data directory variables ----
+WORKER_DATA_DIR="${BASE_DIR}/worker"
+UPLOADED_DATA_DIR="${BASE_DIR}/uploaded"
+DEAD_LETTER_DATA_DIR="${BASE_DIR}/dead_letter"
+# ---- END MODIFICATION ----
+
 # TARGET_BINARY_PATH is the fixed location where the binary will be installed.
 # Systemd units will point to this fixed path.
 TARGET_BINARY_PATH="${BASE_DIR}/bin/${APP_NAME}" # e.g., /opt/exportcliv2/bin/exportcliv2
@@ -131,6 +137,9 @@ COMMON_CONFIGS_SUBDIR="${COMMON_CONFIGS_SUBDIR:-config_files}"
 COMMON_CFG_DIR="${SCRIPT_DIR}/${COMMON_CONFIGS_SUBDIR}"
 
 BITMOVER_LOG_DIR="${BITMOVER_LOG_DIR_CONFIG:-/var/log/${APP_NAME}/bitmover}"
+# ---- MODIFICATION: Define BITMOVER_CONFIG_FILE path for consistency and use in BASE_VARS_FILE ----
+BITMOVER_CONFIG_FILE="${ETC_DIR}/config.ini"
+# ---- END MODIFICATION ----
 
 REMOTE_HOST_URL="${REMOTE_HOST_URL_CONFIG}" # Value already validated
 BASE_VARS_FILE="/etc/default/${APP_NAME}_base_vars"
@@ -153,7 +162,7 @@ shopt -u nullglob
 (( ${#systemd_template_files[@]} )) || error_exit "No .template files found in $TEMPLATES_DIR"
 info "Found ${#systemd_template_files[@]} systemd template(s)."
 
-declare -a required_commands=("getent" "groupadd" "useradd" "install" "sed" "systemctl" "python3" "find" "id")
+declare -a required_commands=("getent" "groupadd" "useradd" "install" "sed" "systemctl" "python3" "find" "id" "chown") # Added chown
 for cmd in "${required_commands[@]}"; do
   command -v "$cmd" &>/dev/null || error_exit "Required command '$cmd' is not installed or not in PATH."
 done
@@ -227,6 +236,12 @@ setup_python_venv(){
     || error_exit "Failed to upgrade pip in '$venv_path'."
   $DRY_RUN "$pip_executable" install "$wheel_to_install" \
     || error_exit "Failed to install wheel '$wheel_to_install' into '$venv_path'."
+
+  # ---- MODIFICATION: Set correct ownership for the venv directory ----
+  info "Setting ownership of venv '$venv_path' to '$venv_owner:$venv_group'..."
+  $DRY_RUN chown -R "$venv_owner:$venv_group" "$venv_path" \
+    || error_exit "Failed to set ownership for venv '$venv_path'."
+  # ---- END MODIFICATION ----
   info "Python setup complete for '$venv_path'."
 }
 
@@ -234,6 +249,7 @@ deploy_systemd_units(){
   info "Deploying systemd units to '$SYSTEMD_DIR'..."
   ensure_directory "$SYSTEMD_DIR" "root" "root" "0755"
 
+  # ---- MODIFICATION: Added replacements for new data directories and BITMOVER_LOG_DIR ----
   local sed_replacements=(
     -e "s|{{APP_NAME}}|${APP_NAME}|g"
     -e "s|{{APP_USER}}|${APP_USER}|g"
@@ -243,10 +259,15 @@ deploy_systemd_units(){
     -e "s|{{TARGET_BINARY_PATH}}|${TARGET_BINARY_PATH}|g"
     -e "s|{{SOURCE_DATA_DIR}}|${SOURCE_DATA_DIR}|g"
     -e "s|{{CSV_DATA_DIR}}|${CSV_DATA_DIR}|g"
+    -e "s|{{WORKER_DATA_DIR}}|${WORKER_DATA_DIR}|g"
+    -e "s|{{UPLOADED_DATA_DIR}}|${UPLOADED_DATA_DIR}|g"
+    -e "s|{{DEAD_LETTER_DATA_DIR}}|${DEAD_LETTER_DATA_DIR}|g"
     -e "s|{{PYTHON_VENV_PATH}}|${PYTHON_VENV_PATH}|g"
-    -e "s|{{BITMOVER_CONFIG_FILE}}|${ETC_DIR}/config.ini|g"
+    -e "s|{{BITMOVER_CONFIG_FILE}}|${BITMOVER_CONFIG_FILE}|g" # Uses the new BITMOVER_CONFIG_FILE variable
+    -e "s|{{BITMOVER_LOG_DIR}}|${BITMOVER_LOG_DIR}|g"
     -e "s#{{REMOTE_HOST_URL}}#${REMOTE_HOST_URL}#g"
   )
+  # ---- END MODIFICATION ----
 
   for template_file in "${systemd_template_files[@]}"; do
     local unit_name
@@ -260,8 +281,10 @@ deploy_systemd_units(){
   done
 
   info "Reloading systemd daemon..."
+  # ---- MODIFICATION: Changed from warn to error_exit on failure ----
   $DRY_RUN systemctl daemon-reload \
-    || warn "Failed to reload systemd daemon. Manual reload may be required."
+    || error_exit "Failed to reload systemd daemon. Manual reload may be required or systemd is in a bad state."
+  # ---- END MODIFICATION ----
   info "Systemd units deployed."
 }
 
@@ -281,9 +304,9 @@ deploy_application_configs(){
   done
 
   local bitmover_template_path="${COMMON_CFG_DIR}/config.ini.template"
-  local bitmover_config_path="${ETC_DIR}/config.ini"
+  # local bitmover_config_path="${ETC_DIR}/config.ini" # Already defined as BITMOVER_CONFIG_FILE
   if [[ -f "$bitmover_template_path" ]]; then
-    info "Deploying Bitmover config from template '$bitmover_template_path' to '$bitmover_config_path'..."
+    info "Deploying Bitmover config from template '$bitmover_template_path' to '$BITMOVER_CONFIG_FILE'..."
     ensure_directory "$BITMOVER_LOG_DIR" "$APP_USER" "$APP_GROUP" "0770"
 
     local sed_replacements=(
@@ -291,11 +314,11 @@ deploy_application_configs(){
       -e "s|{{BITMOVER_LOG_DIR}}|${BITMOVER_LOG_DIR}|g"
       -e "s#{{REMOTE_HOST_URL}}#${REMOTE_HOST_URL}#g"
     )
-    $DRY_RUN sed "${sed_replacements[@]}" "$bitmover_template_path" > "$bitmover_config_path" \
-      || error_exit "Failed to generate '$bitmover_config_path' from template."
-    $DRY_RUN chmod 0640 "$bitmover_config_path"
-    $DRY_RUN chown "$APP_USER:$APP_GROUP" "$bitmover_config_path"
-    info "Bitmover config '$bitmover_config_path' deployed."
+    $DRY_RUN sed "${sed_replacements[@]}" "$bitmover_template_path" > "$BITMOVER_CONFIG_FILE" \
+      || error_exit "Failed to generate '$BITMOVER_CONFIG_FILE' from template."
+    $DRY_RUN chmod 0640 "$BITMOVER_CONFIG_FILE"
+    $DRY_RUN chown "$APP_USER:$APP_GROUP" "$BITMOVER_CONFIG_FILE"
+    info "Bitmover config '$BITMOVER_CONFIG_FILE' deployed."
   else
     warn "Bitmover config template '$bitmover_template_path' not found. Skipping config.ini deployment."
   fi
@@ -307,6 +330,7 @@ save_environment_variables_file(){
   local script_name
   script_name=$(basename "$0")
   local content
+  # ---- MODIFICATION: Added BITMOVER_CONFIG_FILE and new data directory variables ----
   content=$(cat <<EOF
 # Base environment variables for ${APP_NAME}
 # Generated by ${script_name} on $(_ts)
@@ -318,12 +342,17 @@ export ETC_DIR="${ETC_DIR}"
 export TARGET_BINARY_PATH="${TARGET_BINARY_PATH}" # This is the fixed runtime path
 export SOURCE_DATA_DIR="${SOURCE_DATA_DIR}"
 export CSV_DATA_DIR="${CSV_DATA_DIR}"
+export WORKER_DATA_DIR="${WORKER_DATA_DIR}"
+export UPLOADED_DATA_DIR="${UPLOADED_DATA_DIR}"
+export DEAD_LETTER_DATA_DIR="${DEAD_LETTER_DATA_DIR}"
 export PYTHON_VENV_PATH="${PYTHON_VENV_PATH}"
 export BITMOVER_LOG_DIR="${BITMOVER_LOG_DIR}"
+export BITMOVER_CONFIG_FILE="${BITMOVER_CONFIG_FILE}"
 export REMOTE_HOST_URL="${REMOTE_HOST_URL}"
 # Note: The actual source binary filename used for this install was: ${APPLICATION_BINARY_FILENAME:-Not Set or Error}
 EOF
 )
+  # ---- END MODIFICATION ----
   $DRY_RUN printf "%s\n" "$content" > "$BASE_VARS_FILE" \
     || error_exit "Failed to write environment variables to '$BASE_VARS_FILE'."
   $DRY_RUN chmod 0644 "$BASE_VARS_FILE" \
@@ -348,9 +377,9 @@ main(){
   ensure_directory "${BASE_DIR}/bin"        "$APP_USER" "$APP_GROUP" "0750"
   ensure_directory "$SOURCE_DATA_DIR"       "$APP_USER" "$APP_GROUP" "0770"
   ensure_directory "$CSV_DATA_DIR"          "$APP_USER" "$APP_GROUP" "0770"
-  ensure_directory "${BASE_DIR}/worker"     "$APP_USER" "$APP_GROUP" "0770"
-  ensure_directory "${BASE_DIR}/uploaded"   "$APP_USER" "$APP_GROUP" "0770"
-  ensure_directory "${BASE_DIR}/dead_letter" "$APP_USER" "$APP_GROUP" "0770"
+  ensure_directory "$WORKER_DATA_DIR"       "$APP_USER" "$APP_GROUP" "0770"
+  ensure_directory "$UPLOADED_DATA_DIR"     "$APP_USER" "$APP_GROUP" "0770"
+  ensure_directory "$DEAD_LETTER_DATA_DIR"  "$APP_USER" "$APP_GROUP" "0770"
 
   # 3. Install Application Binary
   # Source is $SOURCE_BINARY_FILE_PATH (e.g. .../exportcliv2-v1.2.3)

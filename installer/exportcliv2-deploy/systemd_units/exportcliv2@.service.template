@@ -19,8 +19,9 @@ ExecStartPre=-/usr/bin/rm -f {{CSV_DATA_DIR}}/%i.restart
 ExecStartPre=/usr/bin/test -d {{SOURCE_DATA_DIR}} -a -w {{SOURCE_DATA_DIR}}
 ExecStartPre=/usr/bin/test -d {{CSV_DATA_DIR}} -a -w {{CSV_DATA_DIR}}
 
-EnvironmentFile={{ETC_DIR}}/%i.conf
+# The instance file can override the default auth
 EnvironmentFile={{ETC_DIR}}/common.auth.conf
+EnvironmentFile={{ETC_DIR}}/%i.conf
 
 ExecStart={{TARGET_BINARY_PATH}} \
     -u "${EXPORT_AUTH_TOKEN_U}" \
