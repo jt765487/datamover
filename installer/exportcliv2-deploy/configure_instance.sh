@@ -4,13 +4,14 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # -----------------------------------------------------------------------------
-# Instance Configurator for exportcliv2 (v3 - Further Refined)
+# Instance Configurator for exportcliv2 (v3 - Corrected Arg Parsing)
 # -----------------------------------------------------------------------------
 # - Creates <instance>.conf (environment variables for wrapper script).
 # - Creates <instance>_app.conf (config file for exportcliv2 binary -c arg).
 # - Uses defaults from base installer via /etc/default/${APP_NAME}_base_vars.
 # - Incorporates feedback on exit codes, helper functions, --force documentation,
 #   dry-run consistency, success messaging, and usage error handling.
+# - Corrected getopts handling for long options.
 # -----------------------------------------------------------------------------
 
 # --- Exit Codes ---
@@ -34,31 +35,30 @@ error_exit() {
 
 SCRIPT_SUCCESSFUL=false # Flag to indicate successful completion for EXIT trap
 
-# shellcheck disable=SC2317
 cleanup_on_error() {
   local exit_code="${1:-$?}"
   local line_num="${2:-UNKNOWN_LINE}"
   local failed_command="${3:-UNKNOWN_COMMAND}"
 
-  # This ERR trap runs if a command fails due to set -e, or if error_exit is called.
-  # If error_exit was called, SCRIPT_SUCCESSFUL will be false.
-  # If set -e triggered this, SCRIPT_SUCCESSFUL will also be false.
-  # We only want to print detailed error if error_exit hasn't already handled it.
   if [[ "$exit_code" -ne "$EXIT_CODE_SUCCESS" && "$failed_command" != "error_exit"* ]]; then
     warn "Instance configuration FAILED on line ${line_num} with command: ${failed_command} (exit code: ${exit_code})."
     warn "System may be in an inconsistent state. Review logs and manually clean up if necessary."
   fi
   SCRIPT_SUCCESSFUL=false # Ensure it's false on any error
 }
-# shellcheck disable=SC2317
+
 cleanup_on_exit() {
     local exit_code="${1:-$?}"
     if [[ "$SCRIPT_SUCCESSFUL" == true && "$exit_code" -eq "$EXIT_CODE_SUCCESS" ]]; then
         info "-------------------- INSTANCE CONFIGURATION COMPLETED SUCCESSFULLY --------------------"
     elif [[ "$exit_code" -ne "$EXIT_CODE_SUCCESS" && "$SCRIPT_SUCCESSFUL" == false ]]; then
         # Error message would have been printed by error_exit or cleanup_on_error
-        info "-------------------- INSTANCE CONFIGURATION FAILED --------------------"
+        # Avoid printing "FAILED" if usage was called for -h (which exits 0)
+        if [[ "$exit_code" -ne "$EXIT_CODE_SUCCESS" || ($exit_code -eq "$EXIT_CODE_SUCCESS" && "$SCRIPT_SUCCESSFUL" == false) ]]; then
+             info "-------------------- INSTANCE CONFIGURATION FAILED OR EXITED PREMATURELY --------------------"
+        fi
     fi
+    # Add any other final cleanup here
 }
 
 trap 'cleanup_on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
@@ -98,11 +98,7 @@ Options:
   -n                        Dry-run mode (print commands, no execution).
   -h                        Show this help message and exit.
 EOF
-  # If usage is called directly (e.g. -h), exit with 0. If called due to error, caller should use error_exit.
-  # However, for consistency with error_exit, we'll make it exit with USAGE_ERROR.
-  # The caller can decide if it's a "clean help exit" or an error.
-  # For -h, the script exits before SCRIPT_SUCCESSFUL is set to true.
-  exit "${1:-$EXIT_CODE_USAGE_ERROR}"
+  exit "${1:-$EXIT_CODE_USAGE_ERROR}" # Default to usage error if no specific code given
 }
 
 while getopts ":nhi:" o; do
@@ -110,17 +106,27 @@ while getopts ":nhi:" o; do
     i) INSTANCE="$OPTARG" ;;
     n) DRY_RUN="echo" ;;
     h) usage "$EXIT_CODE_SUCCESS" ;; # Explicit success exit for -h
-    \?) error_exit "Invalid short option: -$OPTARG. Use -h for help." "$EXIT_CODE_USAGE_ERROR" ;;
+    \?)
+        # Check if the problematic argument (at current OPTIND) is a long option
+        if [[ "${!OPTIND:-}" == --* ]]; then
+            break # It's a long option, stop getopts processing here.
+                  # OPTIND is not advanced by getopts for invalid options in silent mode.
+        else
+            error_exit "Invalid short option: -$OPTARG. Use -h for help." "$EXIT_CODE_USAGE_ERROR"
+        fi
+        ;;
     :) error_exit "Short option -$OPTARG requires an argument. Use -h for help." "$EXIT_CODE_USAGE_ERROR" ;;
   esac
 done
-shift $((OPTIND -1))
+shift $((OPTIND -1)) # Remove processed short options and their arguments
 
-# Manual parsing for long options
+# Manual parsing for long options from remaining arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --config-source-env-file)
-            if [[ -z "${2:-}" ]]; then error_exit "Option --config-source-env-file requires an argument." "$EXIT_CODE_USAGE_ERROR"; fi
+            if [[ -z "${2:-}" || "${2}" == -* ]]; then # Also check if next arg looks like an option
+                error_exit "Option --config-source-env-file requires an argument." "$EXIT_CODE_USAGE_ERROR";
+            fi
             CONFIG_SRC_ENV_FILE="$2"
             shift 2
             ;;
@@ -152,7 +158,7 @@ fi
 info "Validated instance name: \"${INSTANCE}\""
 
 # --- Pre-flight check for required commands ---
-required_commands=(getent install date id basename chmod chown printf mkdir)
+required_commands=(getent install date id basename chmod chown printf mkdir sed)
 info "Checking for required commands..."
 for cmd in "${required_commands[@]}"; do
   command -v "$cmd" &>/dev/null || error_exit "Required command \"${cmd}\" is not installed or not in PATH." "$EXIT_CODE_PREREQUISITE_ERROR"
@@ -203,8 +209,6 @@ _manage_file_permissions() {
 ensure_config_directory() {
     local dir_path="$1"
     info "Ensuring target configuration directory (previewed in dry-run): \"${dir_path}\""
-    # Using install -d as it's concise for this purpose and sets ownership/perms.
-    # Group is APP_GROUP to allow service to read if needed, root owns.
     $DRY_RUN install -d -o root -g "${APP_GROUP}" -m0755 "${dir_path}" \
         || error_exit "Failed to create or set permissions for directory \"${dir_path}\"." "$EXIT_CODE_FILE_ERROR"
 }
@@ -227,19 +231,17 @@ write_generated_file_content() {
     info "Writing generated ${file_description} to \"${output_path}\"..."
     if [[ -n "$DRY_RUN" ]]; then
         info "[DRY_RUN] Would write the following content to \"${output_path}\":"
-        # Using cat with heredoc for clear dry-run output of content
         cat <<DRYRUNEOF
 --- BEGIN GENERATED ${file_description^^} (${output_path}) ---
 $content
 --- END GENERATED ${file_description^^} ---
 DRYRUNEOF
-        # Also show what chown/chmod would do
-        echo "$DRY_RUN chown \"$owner:$group\" \"$output_path\""
+        echo "$DRY_RUN chown \"$owner:$group\" \"$output_path\"" # DRY_RUN is 'echo'
         echo "$DRY_RUN chmod \"$perms\" \"$output_path\""
     else
         printf "%s\n" "$content" > "$output_path" \
             || error_exit "Failed to write ${file_description} to \"${output_path}\"." "$EXIT_CODE_FILE_ERROR"
-        _manage_file_permissions "$output_path" "$owner" "$group" "$perms" # Call helper for actual chown/chmod
+        _manage_file_permissions "$output_path" "$owner" "$group" "$perms"
         info "Successfully generated and saved ${file_description} to \"${output_path}\"."
     fi
 }
@@ -257,8 +259,12 @@ if [[ -e "$TARGET_ENV_CONF_FILE" ]]; then
 fi
 if [[ -e "$TARGET_APP_SPECIFIC_CONFIG_FILE" ]]; then
     target_files_exist=true
-    existing_files_msg+="'${TARGET_APP_SPECIFIC_CONFIG_FILE}'"
+    existing_files_msg+="'${TARGET_APP_SPECIFIC_CONFIG_FILE}'" # No trailing space needed if it's the last one
 fi
+
+# Trim trailing space from existing_files_msg if any
+existing_files_msg="${existing_files_msg%" "}"
+
 
 if [[ "$target_files_exist" == true && -z "$FORCE_OVERWRITE" ]]; then
   if [[ -z "$DRY_RUN" ]]; then
@@ -285,18 +291,31 @@ else
 # ${APP_NAME} instance "${INSTANCE}" environment configuration for wrapper script
 # Generated by ${script_basename} on $(_ts)
 
-EXPORT_TIMEOUT="${DEFAULT_CONFIGURE_INSTANCE_EXPORT_TIMEOUT}" # From base_vars, ultimately install-app.conf
-EXPORT_SOURCE="${INSTANCE}" # Used by wrapper to construct part of the -o path
+# Timeout for the exportcliv2 binary, sourced from EXPORT_TIMEOUT_CONFIG in install-app.conf
+# via the ${BASE_VARS_FILE} file.
+EXPORT_TIMEOUT="${DEFAULT_CONFIGURE_INSTANCE_EXPORT_TIMEOUT}"
+
+# Source identifier, typically the instance name. Used by the wrapper script
+# to construct part of the -o path for the exportcliv2 binary.
+EXPORT_SOURCE="${INSTANCE}"
 
 # --- Time Configuration ---
+# EXPORT_STARTTIME_OFFSET_SPEC is used by the wrapper script to calculate the dynamic start time.
+# Examples: "3 minutes ago", "1 hour ago", "2 days ago 00:00"
 EXPORT_STARTTIME_OFFSET_SPEC="${DEFAULT_EXPORT_STARTTIME_OFFSET_SPEC}"
+
+# EXPORT_ENDTIME is passed by the wrapper directly to the ${APP_NAME} binary.
+# For this version, it is typically fixed to ${DEFAULT_EXPORT_ENDTIME_VALUE}
 EXPORT_ENDTIME="${DEFAULT_EXPORT_ENDTIME_VALUE}"
 
 # --- Network and Other Parameters ---
+# These are passed by the wrapper directly to the ${APP_NAME} binary.
 EXPORT_IP="${DEFAULT_EXPORT_IP}"
 EXPORT_PORTID="${DEFAULT_EXPORT_PORTID}"
 
 # --- Path to Per-Instance Application Specific Config File ---
+# This file is referenced by the -c argument passed by the wrapper to the ${APP_NAME} binary.
+# It is also generated by ${script_basename} in ${TARGET_CONF_DIR}/
 EXPORT_APP_CONFIG_FILE_PATH="${TARGET_APP_SPECIFIC_CONFIG_FILE}"
 EOF
 )
@@ -304,14 +323,11 @@ EOF
 fi
 
 # Always Generate/Update Application-Specific Config File (e.g., ZZZ_app.conf)
-# This file is simple and has fixed default content.
-# The main overwrite guard already handled the "exists without --force" scenario.
-# So, if we are here, either the file doesn't exist, or --force was given.
 write_generated_file_content "$DEFAULT_APP_CONFIG_CONTENT" "$TARGET_APP_SPECIFIC_CONFIG_FILE" "root" "$APP_GROUP" "0640" "application-specific configuration"
 
 
 # --- Next Steps Information ---
-info "Instance configuration for \"${INSTANCE}\" processing complete." # "processing complete" to avoid "successful" before final exit trap
+info "Instance configuration for \"${INSTANCE}\" processing complete."
 info "  Environment config (for wrapper): \"${TARGET_ENV_CONF_FILE}\""
 info "  Application config (for -c arg):  \"${TARGET_APP_SPECIFIC_CONFIG_FILE}\""
 if [[ -z "$CONFIG_SRC_ENV_FILE" ]]; then
@@ -322,9 +338,8 @@ info "    - Review ${TARGET_APP_SPECIFIC_CONFIG_FILE} if '${DEFAULT_APP_CONFIG_C
 
 
 readonly main_service_name="${APP_NAME}@${INSTANCE}.service"
-readonly path_service_name="${APP_NAME}-restart@${INSTANCE}.path" # Assuming this naming from previous context
+readonly path_service_name="${APP_NAME}-restart@${INSTANCE}.path"
 
-# Final guidance printed to stdout, not via info/warn
 cat <<EOF
 
 -----------------------------------------------------------------------------
@@ -354,6 +369,5 @@ Remember to review/edit config files if defaults were generated or sourced.
 -----------------------------------------------------------------------------
 EOF
 
-SCRIPT_SUCCESSFUL=true # Set flag for successful completion
-# Normal exit will trigger cleanup_on_exit
+SCRIPT_SUCCESSFUL=true
 exit "$EXIT_CODE_SUCCESS"
