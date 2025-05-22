@@ -1,0 +1,87 @@
+#!/bin/bash
+set -euo pipefail
+
+# Wrapper script for {{APP_NAME}} instance: $1 (passed by systemd as %i)
+# Executed as {{APP_USER}}
+
+# --- Instance Name from Argument ---
+if [[ -z "$1" ]]; then
+  echo "Error: Instance name argument (%i) not provided to wrapper script." >&2
+  exit 78 # EX_CONFIG
+fi
+INSTANCE_NAME="$1"
+
+# --- Log script start (optional but helpful) ---
+echo "Wrapper script for {{APP_NAME}}@${INSTANCE_NAME} starting..."
+
+# --- Sanity check required environment variables ---
+# These are expected to be set by systemd via EnvironmentFile directives
+# (e.g., from {{ETC_DIR}}/common.auth.conf and {{ETC_DIR}}/${INSTANCE_NAME}.conf)
+required_vars=(
+  "EXPORT_AUTH_TOKEN_U"
+  "EXPORT_AUTH_TOKEN_P"
+  "EXPORT_TIMEOUT"
+  "EXPORT_SOURCE" # Used to build -o path
+  "EXPORT_IP"
+  "EXPORT_PORTID"
+  "EXPORT_APP_CONFIG_FILE_PATH"
+  "EXPORT_STARTTIME_OFFSET_SPEC"
+)
+for var_name in "${required_vars[@]}"; do
+  if [[ -z "${!var_name:-}" ]]; then # Indirect expansion
+    echo "Error: {{APP_NAME}}@${INSTANCE_NAME}: Required environment variable '${var_name}' is not set. Check {{ETC_DIR}}/common.auth.conf and {{ETC_DIR}}/${INSTANCE_NAME}.conf." >&2
+    exit 78 # EX_CONFIG
+  fi
+done
+
+# --- Calculate dynamic start time ---
+# Uses EXPORT_STARTTIME_OFFSET_SPEC from the environment
+calculated_start_time=$(date +%s%3N --date="${EXPORT_STARTTIME_OFFSET_SPEC}" 2>/dev/null)
+
+if [[ -z "$calculated_start_time" ]]; then
+  echo "Error: {{APP_NAME}}@${INSTANCE_NAME}: Could not calculate start_time using EXPORT_STARTTIME_OFFSET_SPEC ('${EXPORT_STARTTIME_OFFSET_SPEC}'). Check this variable in {{ETC_DIR}}/${INSTANCE_NAME}.conf and ensure 'date' command works." >&2
+  exit 78 # EX_CONFIG
+fi
+
+# --- Check if the app-specific config file actually exists ---
+if [[ ! -f "${EXPORT_APP_CONFIG_FILE_PATH}" ]]; then
+    echo "Error: {{APP_NAME}}@${INSTANCE_NAME}: Application specific config file specified by EXPORT_APP_CONFIG_FILE_PATH ('${EXPORT_APP_CONFIG_FILE_PATH}') does not exist." >&2
+    exit 78 # EX_CONFIG
+fi
+
+# --- Construct paths for arguments ---
+CSV_INSTANCE_DIR="{{CSV_DATA_DIR}}/${INSTANCE_NAME}"
+SOURCE_INSTANCE_PATH="{{SOURCE_DATA_DIR}}/${EXPORT_SOURCE}"
+
+# --- Log execution details (optional, can be verbose) ---
+printf "Executing for %s: %s \\\n" "${INSTANCE_NAME}" "{{SYMLINK_EXECUTABLE_PATH}}"
+printf "  -c %s \\\n" "${EXPORT_APP_CONFIG_FILE_PATH}"
+printf "  -u %s \\\n" "***" # Mask auth token
+printf "  -p %s \\\n" "***" # Mask auth token
+printf "  -C \\\n"
+printf "  -t %s \\\n" "${EXPORT_TIMEOUT}"
+printf "  -H %s \\\n" "${CSV_INSTANCE_DIR}"
+printf "  -o %s \\\n" "${SOURCE_INSTANCE_PATH}"
+printf "  %s \\\n" "${EXPORT_IP}"
+printf "  %s \\\n" "${EXPORT_PORTID}"
+printf "  %s \\\n" "${calculated_start_time}"
+printf "  %s\n" "-1"
+
+# --- Execute the main application binary ---
+exec "{{SYMLINK_EXECUTABLE_PATH}}" \
+  -c "${EXPORT_APP_CONFIG_FILE_PATH}" \
+  -u "${EXPORT_AUTH_TOKEN_U}" \
+  -p "${EXPORT_AUTH_TOKEN_P}" \
+  -C \
+  -t "${EXPORT_TIMEOUT}" \
+  -H "${CSV_INSTANCE_DIR}" \
+  -o "${SOURCE_INSTANCE_PATH}" \
+  "${EXPORT_IP}" \
+  "${EXPORT_PORTID}" \
+  "${calculated_start_time}" \
+  -1
+
+# If exec fails, this script will exit.
+# If exec succeeds, this part is never reached.
+# Propagate exit status if exec were to somehow return control (highly unlikely for successful exec).
+exit $?

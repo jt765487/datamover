@@ -1,5 +1,5 @@
 [Unit]
-Description={{APP_NAME}} instance %I
+Description=exportcliv2 instance %I
 After=network-online.target
 Wants=network-online.target
 
@@ -7,37 +7,29 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-User={{APP_USER}}
-Group={{APP_GROUP}}
+User=exportcliv2_user
+Group=datapipeline_group
 UMask=0027
-WorkingDirectory={{BASE_DIR}}
+WorkingDirectory=/var/tmp/testme
 
 # Remove any existing restart trigger file before starting
-ExecStartPre=-/usr/bin/rm -f {{CSV_DATA_DIR}}/%i.restart
+ExecStartPre=-/usr/bin/rm -f /var/tmp/testme/csv/%i.restart
 
 # Check if the required directories are present and writable
-ExecStartPre=/usr/bin/test -d {{SOURCE_DATA_DIR}} -a -w {{SOURCE_DATA_DIR}}
-ExecStartPre=/usr/bin/test -d {{CSV_DATA_DIR}} -a -w {{CSV_DATA_DIR}}
+ExecStartPre=/usr/bin/test -d /var/tmp/testme/source -a -w /var/tmp/testme/source
+ExecStartPre=/usr/bin/test -d /var/tmp/testme/csv -a -w /var/tmp/testme/csv
 
-# The instance file can override the default auth
-EnvironmentFile={{ETC_DIR}}/common.auth.conf
-EnvironmentFile={{ETC_DIR}}/%i.conf
+# Load common auth first, then instance-specific configurations.
+# These environment variables will be available to the ExecStart script.
+EnvironmentFile=/etc/exportcliv2/common.auth.conf
+EnvironmentFile=/etc/exportcliv2/%i.conf
 
-ExecStart={{TARGET_BINARY_PATH}} \
-    -u "${EXPORT_AUTH_TOKEN_U}" \
-    -p "${EXPORT_AUTH_TOKEN_P}" \
-    -t "${EXPORT_TIMEOUT}" \
-    -H {{CSV_DATA_DIR}} \
-    -o \
-    {{SOURCE_DATA_DIR}}/"${EXPORT_SOURCE}" \
-    "${EXPORT_IP}" \
-    "${EXPORT_PORTID}" \
-    "${EXPORT_STARTTIME}" \
-    "${EXPORT_ENDTIME}"
+# ExecStart now calls the wrapper script, passing the instance name.
+ExecStart=/var/tmp/testme/bin/run_exportcliv2_instance.sh %i
 
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier={{APP_NAME}}@%i
+SyslogIdentifier=exportcliv2@%i
 Restart=on-failure
 RestartSec=5s
 

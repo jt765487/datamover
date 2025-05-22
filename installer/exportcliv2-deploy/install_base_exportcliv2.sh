@@ -1,175 +1,173 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1090,SC2154 # SC1090 for source, SC2154 for sourced variables
 set -euo pipefail
 IFS=$'\n\t'
 
 # -----------------------------------------------------------------------------
-# Base Installer for exportcliv2 + bitmover
-# Enhanced for Production Use - APP_NAME is internally fixed to "exportcliv2"
-# Allows configurable source binary filename via install-app.conf
-# Enforces root execution. Includes URL validation and error trap.
-# Script Name: install_base_exportcliv2.sh
+# Base Installer for exportcliv2 + bitmover (Combined Logic Version - Corrected)
+# Merges internal review structure with detailed placeholder replacement logic.
+# Incorporates fixes for readonly assignment, getopts clarity, and systemctl pattern.
 # -----------------------------------------------------------------------------
 
-# --- Logging ---
+# --- Logging & Globals ---
 _ts()   { date -u +'%Y-%m-%dT%H:%M:%SZ'; }
 info()  { echo "$(_ts) [INFO]  $*"; }
 warn()  { echo "$(_ts) [WARN]  $*"; }
 error_exit() { echo "$(_ts) [ERROR] $*" >&2; exit 1; }
 
-# --- Cleanup function for error trap ---
 cleanup() {
-  local exit_code=$?
-  if [[ $exit_code -ne 0 ]]; then
-    warn "Installation failed or was interrupted (exit code: $exit_code)."
-    warn "The system might be in an inconsistent state."
-    warn "Please review logs and manually clean up if necessary."
+  local exit_code="${1:-$?}"
+  if [[ "$exit_code" -ne 0 ]]; then
+    warn "Installation failed or was interrupted (passed exit code: $exit_code)."
+    warn "System may be in an inconsistent state. Please review logs."
   fi
 }
-trap cleanup EXIT # Catches normal exit and exit due to set -e
 
-# --- Enforce Root Execution ---
+trap 'cleanup $?' ERR
+trap 'cleanup 0' EXIT
+
+readonly APP_NAME="exportcliv2"
+
+# --- Argument Parsing ---
+CONFIG_FILE_PATH="install-app.conf"
+DRY_RUN=""
+RESTART_SERVICES=false
+LOG_FILE=""
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [-c <config_file>] [-n] [-r] [-l <log_file>] [-h]
+
+Installs or updates the '${APP_NAME}' application suite.
+This script MUST be run as root or with sudo.
+
+Options:
+  -c <config_file>  Configuration file to use (default: ./install-app.conf).
+  -n                Dry-run mode (print commands instead of executing).
+  -r                Restart services on successful completion (if not in dry-run).
+  -l <log_file>     Append all stdout/stderr to <log_file>.
+  -h                Show this help message and exit.
+EOF
+  exit 0
+}
+
+# CORRECTED: getopts string order (cosmetic, for clarity)
+while getopts ":nrhlc:l:" o; do # Flags first, then options requiring arguments
+  case $o in
+    c) CONFIG_FILE_PATH="$OPTARG" ;;
+    n) DRY_RUN="echo" ;;
+    r) RESTART_SERVICES=true ;;
+    l) LOG_FILE="$OPTARG" ;;
+    h) usage ;;
+    \?) error_exit "Invalid option: -$OPTARG. Use -h for help." ;;
+    :) error_exit "Option -$OPTARG requires an argument. Use -h for help." ;;
+  esac
+done
+shift $((OPTIND -1))
+
+# --- Setup Logging to File (if specified) ---
+if [[ -n "$LOG_FILE" ]]; then
+  if [[ "$LOG_FILE" == */* ]]; then
+      log_dir_path="$(dirname "$LOG_FILE")"
+      if ! mkdir -p "$log_dir_path"; then # Not using $DRY_RUN for log setup
+          echo "$(_ts) [ERROR] Failed to create log directory: $log_dir_path" >&2; exit 1;
+      fi
+  fi
+  # Append to log file AND send to original stdout/stderr
+  exec > >(tee -a "$LOG_FILE") 2>&1
+  info "Logging all output to '$LOG_FILE'"
+fi
+
+# --- Root Execution Check ---
 if [[ "$(id -u)" -ne 0 ]]; then
   error_exit "This script must be run as root or with sudo."
 fi
 
-# --- Defaults & CLI Argument Parsing ---
-# Default config file name.
-CONFIG_FILE_PATH="install-app.conf"
-DRY_RUN=""
-
-# The application name for directory structures, services, users etc. is fixed.
-APP_NAME="exportcliv2" # This is THE application name for internal logic and paths
-
-while getopts "c:nh" o; do
-  case $o in
-    c) CONFIG_FILE_PATH="$OPTARG" ;; # User specifies the config file path
-    n) DRY_RUN="echo"   ;;
-    h)
-      cat <<EOF
-Usage: $0 [-c <config_file_path>] [-n] [-h]
-
-Installs the base system for the '${APP_NAME}' application suite.
-This script MUST be run as root or with sudo.
-The configuration file ('${CONFIG_FILE_PATH}' by default) is mandatory.
-It must define APPLICATION_BINARY_FILENAME and REMOTE_HOST_URL_CONFIG.
-
-Options:
-  -c <config_file_path> Configuration file to use.
-                        (default: ./install-app.conf)
-  -n                    Dry-run mode. Print commands instead of executing them.
-  -h                    Display this help message and exit.
-EOF
-      exit 0
-      ;;
-    *) error_exit "Invalid option. Use -h for help." ;;
-  esac
-done
-shift $((OPTIND - 1))
-
+# CORRECTED: readonly SCRIPT_DIR assignment order
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 
-# --- Load Configuration (Mandatory) ---
-info "Attempting to load configuration from '$CONFIG_FILE_PATH'..."
+# --- Load Configuration ---
+info "Loading configuration from '$CONFIG_FILE_PATH'..."
 if [[ -f "$CONFIG_FILE_PATH" ]]; then
-  # shellcheck disable=SC1090
   source "$CONFIG_FILE_PATH"
-  info "Successfully loaded configuration from '$CONFIG_FILE_PATH'."
+  info "Configuration loaded successfully from '$CONFIG_FILE_PATH'."
 else
-  error_exit "Configuration file '$CONFIG_FILE_PATH' not found. This file is required. Please create it or use the -c option to specify its path."
+  error_exit "Configuration file '$CONFIG_FILE_PATH' not found."
 fi
 
-# --- Validate Essential Configuration & Derive Variables ---
-info "Validating essential variables sourced from configuration..."
-info "Using fixed APP_NAME (for paths/services): '$APP_NAME'"
+# --- Validate Mandatory Configuration Variables ---
+info "Validating mandatory configuration variables..."
+: "${VERSIONED_APP_BINARY_FILENAME:?VERSIONED_APP_BINARY_FILENAME must be defined in $CONFIG_FILE_PATH}"
+: "${VERSIONED_DATAMOVER_WHEEL_FILENAME:?VERSIONED_DATAMOVER_WHEEL_FILENAME must be defined in $CONFIG_FILE_PATH}"
+: "${REMOTE_HOST_URL_CONFIG:?REMOTE_HOST_URL_CONFIG must be defined in $CONFIG_FILE_PATH}"
+: "${EXPORT_TIMEOUT_CONFIG:?EXPORT_TIMEOUT_CONFIG must be defined in $CONFIG_FILE_PATH}"
 
-# APPLICATION_BINARY_FILENAME must be set in the configuration file.
-if [[ -z "${APPLICATION_BINARY_FILENAME:-}" ]]; then
-  error_exit "APPLICATION_BINARY_FILENAME is not defined in the configuration file ('$CONFIG_FILE_PATH'). This variable is mandatory and specifies the source binary file name."
-fi
-info "Using source application binary filename: '$APPLICATION_BINARY_FILENAME'"
-SOURCE_BINARY_FILE_PATH="${SCRIPT_DIR}/${APPLICATION_BINARY_FILENAME}"
-
-
-# REMOTE_HOST_URL_CONFIG must be set in the configuration file.
-if [[ -z "${REMOTE_HOST_URL_CONFIG:-}" ]]; then
-  error_exit "REMOTE_HOST_URL_CONFIG is not defined in the configuration file ('$CONFIG_FILE_PATH'). This variable is mandatory."
-fi
-# Validate the format of REMOTE_HOST_URL_CONFIG
 if ! [[ "$REMOTE_HOST_URL_CONFIG" =~ ^https?:// ]]; then
-  error_exit "REMOTE_HOST_URL_CONFIG in '$CONFIG_FILE_PATH' ('$REMOTE_HOST_URL_CONFIG') must start with http:// or https://"
+  error_exit "REMOTE_HOST_URL_CONFIG ('$REMOTE_HOST_URL_CONFIG') in '$CONFIG_FILE_PATH' must start with http:// or https://"
 fi
-info "Using REMOTE_HOST_URL_CONFIG: '$REMOTE_HOST_URL_CONFIG'"
-
-# --- Derive other variables ---
-# These variables use values from the config file (if set there and sourced),
-# or script-defined defaults if not provided by the config.
-# APP_NAME is the fixed internal variable for consistent system paths.
-
-APP_USER=${USER_CONFIG:-${APP_NAME}_user}
-APP_GROUP=${GROUP_CONFIG:-${APP_NAME}_group}
-BASE_DIR="${BASE_DIR_CONFIG:-/opt/${APP_NAME}}"
-
-ETC_DIR="/etc/${APP_NAME}"
-SYSTEMD_DIR="/etc/systemd/system"
-
-PYTHON_VENV_DIR_NAME="${PYTHON_VENV_DIR_NAME:-datamover_venv}"
-PYTHON_VENV_PATH="${BASE_DIR}/${PYTHON_VENV_DIR_NAME}"
-
-DATAMOVER_WHEEL_NAME="${DATAMOVER_WHEEL_NAME:-datamover-0.1.0-py3-none-any.whl}"
-WHEEL_PATH="${SCRIPT_DIR}/${DATAMOVER_WHEEL_NAME}"
-
-SOURCE_DATA_DIR="${BASE_DIR}/source"
-CSV_DATA_DIR="${BASE_DIR}/csv"
-# ---- MODIFICATION: Define additional data directory variables ----
-WORKER_DATA_DIR="${BASE_DIR}/worker"
-UPLOADED_DATA_DIR="${BASE_DIR}/uploaded"
-DEAD_LETTER_DATA_DIR="${BASE_DIR}/dead_letter"
-# ---- END MODIFICATION ----
-
-# TARGET_BINARY_PATH is the fixed location where the binary will be installed.
-# Systemd units will point to this fixed path.
-TARGET_BINARY_PATH="${BASE_DIR}/bin/${APP_NAME}" # e.g., /opt/exportcliv2/bin/exportcliv2
-
-SYSTEMD_TEMPLATES_SUBDIR="${SYSTEMD_TEMPLATES_SUBDIR:-systemd_units}"
-TEMPLATES_DIR="${SCRIPT_DIR}/${SYSTEMD_TEMPLATES_SUBDIR}"
-
-COMMON_CONFIGS_SUBDIR="${COMMON_CONFIGS_SUBDIR:-config_files}"
-COMMON_CFG_DIR="${SCRIPT_DIR}/${COMMON_CONFIGS_SUBDIR}"
-
-BITMOVER_LOG_DIR="${BITMOVER_LOG_DIR_CONFIG:-/var/log/${APP_NAME}/bitmover}"
-# ---- MODIFICATION: Define BITMOVER_CONFIG_FILE path for consistency and use in BASE_VARS_FILE ----
-BITMOVER_CONFIG_FILE="${ETC_DIR}/config.ini"
-# ---- END MODIFICATION ----
-
-REMOTE_HOST_URL="${REMOTE_HOST_URL_CONFIG}" # Value already validated
-BASE_VARS_FILE="/etc/default/${APP_NAME}_base_vars"
-
-
-# --- Pre-flight Checks (Fail Fast) ---
-info "Performing pre-flight checks..."
-# Check for the source application binary itself, using the name from config
-if [[ ! -f "$SOURCE_BINARY_FILE_PATH" ]]; then
-  error_exit "Application source binary '$APPLICATION_BINARY_FILENAME' not found at: '$SOURCE_BINARY_FILE_PATH'. Check APPLICATION_BINARY_FILENAME in '$CONFIG_FILE_PATH'."
+# CORRECTED: Regex for EXPORT_TIMEOUT_CONFIG to ensure positive integer if 0 is not allowed.
+# If 0 is allowed and means "no timeout" or similar, ^[0-9]+$ is fine.
+# Assuming positive or zero:
+if ! [[ "$EXPORT_TIMEOUT_CONFIG" =~ ^[0-9]+$ ]]; then
+  error_exit "EXPORT_TIMEOUT_CONFIG ('$EXPORT_TIMEOUT_CONFIG') in '$CONFIG_FILE_PATH' must be a non-negative integer."
+# If strictly positive:
+# if ! [[ "$EXPORT_TIMEOUT_CONFIG" =~ ^[1-9][0-9]*$ ]]; then
+#   error_exit "EXPORT_TIMEOUT_CONFIG ('$EXPORT_TIMEOUT_CONFIG') in '$CONFIG_FILE_PATH' must be a positive integer."
 fi
-info "Application source binary '$APPLICATION_BINARY_FILENAME' found at '$SOURCE_BINARY_FILE_PATH'."
+info "Mandatory configuration variables validated."
 
-[[ -f "$WHEEL_PATH" ]] || error_exit "Application wheel '${DATAMOVER_WHEEL_NAME}' not found at: $WHEEL_PATH"
-[[ -d "$TEMPLATES_DIR" ]] || error_exit "Systemd templates directory not found: $TEMPLATES_DIR (expected from SYSTEMD_TEMPLATES_SUBDIR='${SYSTEMD_TEMPLATES_SUBDIR}')"
+# --- Derived Readonly Variables ---
+readonly APP_USER="${USER_CONFIG:-${APP_NAME}_user}"
+readonly APP_GROUP="${GROUP_CONFIG:-${APP_NAME}_group}"
+readonly BASE_DIR="${BASE_DIR_CONFIG:-/opt/${APP_NAME}}"
+readonly ETC_DIR="/etc/${APP_NAME}"
+readonly SYSTEMD_DIR="/etc/systemd/system"
+readonly PYTHON_VENV_DIR_NAME="${PYTHON_VENV_DIR_NAME:-datamover_venv}"
+readonly PYTHON_VENV_PATH="${BASE_DIR}/${PYTHON_VENV_DIR_NAME}"
+readonly SYMLINK_EXECUTABLE_PATH="${BASE_DIR}/bin/${APP_NAME}"
+readonly DEST_VERSIONED_APP_BINARY_PATH="${BASE_DIR}/bin/${VERSIONED_APP_BINARY_FILENAME}"
+readonly COMMON_CONFIGS_SUBDIR="${COMMON_CONFIGS_SUBDIR:-config_files}"
+readonly COMMON_CFG_DIR="${SCRIPT_DIR}/${COMMON_CONFIGS_SUBDIR}"
+readonly WRAPPER_SCRIPT_TEMPLATE_NAME="run_exportcliv2_instance.sh.template"
+readonly WRAPPER_TEMPLATE_PATH="${COMMON_CFG_DIR}/${WRAPPER_SCRIPT_TEMPLATE_NAME}"
+readonly INSTALLED_WRAPPER_SCRIPT_NAME="run_exportcliv2_instance.sh"
+readonly INSTALLED_WRAPPER_SCRIPT_PATH="${BASE_DIR}/bin/${INSTALLED_WRAPPER_SCRIPT_NAME}"
+readonly SOURCE_DATA_DIR="${BASE_DIR}/source"
+readonly CSV_DATA_DIR="${BASE_DIR}/csv"
+readonly WORKER_DATA_DIR="${BASE_DIR}/worker"
+readonly UPLOADED_DATA_DIR="${BASE_DIR}/uploaded"
+readonly DEAD_LETTER_DATA_DIR="${BASE_DIR}/dead_letter"
+readonly SYSTEMD_TEMPLATES_SUBDIR="${SYSTEMD_TEMPLATES_SUBDIR:-systemd_units}"
+readonly TEMPLATES_DIR="${SCRIPT_DIR}/${SYSTEMD_TEMPLATES_SUBDIR}"
+readonly BITMOVER_LOG_DIR="${BITMOVER_LOG_DIR_CONFIG:-/var/log/${APP_NAME}/bitmover}"
+readonly BITMOVER_CONFIG_FILE="${ETC_DIR}/config.ini"
+readonly BASE_VARS_FILE="/etc/default/${APP_NAME}_base_vars"
+readonly REMOTE_HOST_URL="${REMOTE_HOST_URL_CONFIG}"
+readonly SOURCE_VERSIONED_APP_BINARY_FILE_PATH="${SCRIPT_DIR}/${VERSIONED_APP_BINARY_FILENAME}"
+readonly SOURCE_VERSIONED_WHEEL_FILE_PATH="${SCRIPT_DIR}/${VERSIONED_DATAMOVER_WHEEL_FILENAME}"
+
+# --- Pre-flight Checks ---
+info "Running pre-flight checks..."
+[[ -f "$SOURCE_VERSIONED_APP_BINARY_FILE_PATH" ]] || error_exit "Application binary not found: $SOURCE_VERSIONED_APP_BINARY_FILE_PATH"
+[[ -f "$SOURCE_VERSIONED_WHEEL_FILE_PATH" ]]   || error_exit "Datamover wheel not found: $SOURCE_VERSIONED_WHEEL_FILE_PATH"
+[[ -f "$WRAPPER_TEMPLATE_PATH" ]]            || error_exit "Wrapper script template not found: $WRAPPER_TEMPLATE_PATH"
+[[ -d "$TEMPLATES_DIR" ]]                   || error_exit "Systemd templates directory not found: $TEMPLATES_DIR"
 
 shopt -s nullglob
 mapfile -t systemd_template_files < <(find "$TEMPLATES_DIR" -maxdepth 1 -name "*.template" -print)
 shopt -u nullglob
-(( ${#systemd_template_files[@]} )) || error_exit "No .template files found in $TEMPLATES_DIR"
+(( ${#systemd_template_files[@]} > 0 )) || error_exit "No .template files found in $TEMPLATES_DIR"
 info "Found ${#systemd_template_files[@]} systemd template(s)."
 
-declare -a required_commands=("getent" "groupadd" "useradd" "install" "sed" "systemctl" "python3" "find" "id" "chown") # Added chown
+required_commands=(getent groupadd useradd install sed systemctl python3 find id chown ln basename pushd popd date mkdir printf awk tee) # Added awk, tee
 for cmd in "${required_commands[@]}"; do
   command -v "$cmd" &>/dev/null || error_exit "Required command '$cmd' is not installed or not in PATH."
 done
-info "All required commands are available."
+info "Pre-flight checks passed."
 
 # --- Helper Functions ---
-create_group_if_not_exists(){
+create_group_if_not_exists() {
   local group_name="$1"
   if getent group "$group_name" &>/dev/null; then
     info "Group '$group_name' already exists. Skipping creation."
@@ -179,10 +177,8 @@ create_group_if_not_exists(){
   fi
 }
 
-create_user_if_not_exists(){
-  local username="$1"
-  local primary_group="$2"
-  local home_dir="$3"
+create_user_if_not_exists() {
+  local username="$1"; local primary_group="$2"; local home_dir="$3"
   if getent passwd "$username" &>/dev/null; then
     info "User '$username' already exists. Skipping creation."
   else
@@ -192,225 +188,225 @@ create_user_if_not_exists(){
   fi
 }
 
-ensure_directory(){
-  local dir_path="$1"
-  local owner="$2"
-  local group="$3"
-  local perms="$4"
+ensure_directory() {
+  local dir_path="$1"; local owner="$2"; local group="$3"; local perms="$4"
   info "Ensuring directory '$dir_path' (Owner: $owner, Group: $group, Perms: $perms)..."
-  $DRY_RUN install -d -o "$owner" -g "$group" -m "$perms" "$dir_path" \
-    || error_exit "Failed to create or set permissions for directory '$dir_path'."
+  $DRY_RUN mkdir -p "$dir_path" || error_exit "Failed to create directory '$dir_path'."
+  $DRY_RUN chown "$owner:$group" "$dir_path" || error_exit "Failed to set ownership on '$dir_path'."
+  $DRY_RUN chmod "$perms" "$dir_path" || error_exit "Failed to set permissions on '$dir_path'."
 }
 
-install_file(){
-  local src_file="$1"
-  local dest_file="$2"
-  local owner="$3"
-  local group="$4"
-  local perms="$5"
+install_file_to_dest() {
+  local src_file="$1"; local dest_file="$2"; local owner="$3"; local group="$4"; local perms="$5"
   info "Installing file '$src_file' to '$dest_file' (Owner: $owner, Group: $group, Perms: $perms)..."
   $DRY_RUN install -T -o "$owner" -g "$group" -m "$perms" "$src_file" "$dest_file" \
     || error_exit "Failed to install file '$src_file' to '$dest_file'."
 }
 
-setup_python_venv(){
-  local venv_path="$1"
-  local wheel_to_install="$2"
-  local venv_owner="$3"
-  local venv_group="$4"
-
+setup_python_venv() {
+  local venv_path="$1"; local wheel_to_install="$2"; local venv_owner="$3"; local venv_group="$4"
   ensure_directory "$(dirname "$venv_path")" "$venv_owner" "$venv_group" "0755"
-
   local pip_executable="${venv_path}/bin/pip"
-  if [[ -x "$pip_executable" ]]; then
-    info "Python virtual environment already exists at '$venv_path'. Skipping creation."
+  if [[ -f "$pip_executable" ]]; then
+    info "Python virtual environment likely exists at '$venv_path'."
   else
     info "Creating Python virtual environment at '$venv_path'..."
-    $DRY_RUN python3 -m venv "$venv_path" \
-      || error_exit "Failed to create Python venv. Ensure 'python3-venv' (or equivalent) is installed."
-    info "Python venv created."
+    $DRY_RUN python3 -m venv "$venv_path" || error_exit "Failed to create Python venv."
   fi
-
-  info "Upgrading pip and installing wheel '$wheel_to_install' into '$venv_path'..."
-  $DRY_RUN "$pip_executable" install --upgrade pip \
-    || error_exit "Failed to upgrade pip in '$venv_path'."
-  $DRY_RUN "$pip_executable" install "$wheel_to_install" \
-    || error_exit "Failed to install wheel '$wheel_to_install' into '$venv_path'."
-
-  # ---- MODIFICATION: Set correct ownership for the venv directory ----
-  info "Setting ownership of venv '$venv_path' to '$venv_owner:$venv_group'..."
-  $DRY_RUN chown -R "$venv_owner:$venv_group" "$venv_path" \
-    || error_exit "Failed to set ownership for venv '$venv_path'."
-  # ---- END MODIFICATION ----
+  info "Upgrading pip and installing/upgrading wheel '$wheel_to_install' into '$venv_path'..."
+  $DRY_RUN "$pip_executable" install --upgrade pip || error_exit "Failed to upgrade pip."
+  $DRY_RUN "$pip_executable" install --upgrade "$wheel_to_install" || error_exit "Failed to install/upgrade wheel."
+  $DRY_RUN chown -R "$venv_owner:$venv_group" "$venv_path" || error_exit "Failed to set venv ownership."
   info "Python setup complete for '$venv_path'."
 }
 
-deploy_systemd_units(){
-  info "Deploying systemd units to '$SYSTEMD_DIR'..."
-  ensure_directory "$SYSTEMD_DIR" "root" "root" "0755"
+deploy_wrapper_script() {
+  info "Deploying wrapper script '$INSTALLED_WRAPPER_SCRIPT_NAME' to '$INSTALLED_WRAPPER_SCRIPT_PATH'"
+  local sed_replacements_wrapper=(
+    -e "s|{{APP_NAME}}|${APP_NAME}|g"
+    -e "s|{{APP_USER}}|${APP_USER}|g"
+    -e "s|{{BASE_DIR}}|${BASE_DIR}|g"
+    -e "s|{{ETC_DIR}}|${ETC_DIR}|g"
+    -e "s|{{SYMLINK_EXECUTABLE_PATH}}|${SYMLINK_EXECUTABLE_PATH}|g"
+    -e "s|{{SOURCE_DATA_DIR}}|${SOURCE_DATA_DIR}|g"
+    -e "s|{{CSV_DATA_DIR}}|${CSV_DATA_DIR}|g"
+  )
+  $DRY_RUN sed "${sed_replacements_wrapper[@]}" "$WRAPPER_TEMPLATE_PATH" > "$INSTALLED_WRAPPER_SCRIPT_PATH" \
+    || error_exit "Failed to process wrapper script template '$WRAPPER_TEMPLATE_PATH'."
+  $DRY_RUN chmod 0750 "$INSTALLED_WRAPPER_SCRIPT_PATH"
+  $DRY_RUN chown "${APP_USER}:${APP_GROUP}" "$INSTALLED_WRAPPER_SCRIPT_PATH"
+  info "Wrapper script deployed."
+}
 
-  # ---- MODIFICATION: Added replacements for new data directories and BITMOVER_LOG_DIR ----
-  local sed_replacements=(
+deploy_systemd_units() {
+  info "Deploying systemd units to '$SYSTEMD_DIR'"
+  ensure_directory "$SYSTEMD_DIR" "root" "root" "0755"
+  local sed_replacements_systemd=(
     -e "s|{{APP_NAME}}|${APP_NAME}|g"
     -e "s|{{APP_USER}}|${APP_USER}|g"
     -e "s|{{APP_GROUP}}|${APP_GROUP}|g"
     -e "s|{{BASE_DIR}}|${BASE_DIR}|g"
     -e "s|{{ETC_DIR}}|${ETC_DIR}|g"
-    -e "s|{{TARGET_BINARY_PATH}}|${TARGET_BINARY_PATH}|g"
+    -e "s|{{PYTHON_VENV_PATH}}|${PYTHON_VENV_PATH}|g"
+    -e "s|{{BITMOVER_CONFIG_FILE}}|${BITMOVER_CONFIG_FILE}|g"
+    -e "s|{{BITMOVER_LOG_DIR}}|${BITMOVER_LOG_DIR}|g"
+    -e "s|{{INSTALLED_WRAPPER_SCRIPT_PATH}}|${INSTALLED_WRAPPER_SCRIPT_PATH}|g"
     -e "s|{{SOURCE_DATA_DIR}}|${SOURCE_DATA_DIR}|g"
     -e "s|{{CSV_DATA_DIR}}|${CSV_DATA_DIR}|g"
     -e "s|{{WORKER_DATA_DIR}}|${WORKER_DATA_DIR}|g"
     -e "s|{{UPLOADED_DATA_DIR}}|${UPLOADED_DATA_DIR}|g"
     -e "s|{{DEAD_LETTER_DATA_DIR}}|${DEAD_LETTER_DATA_DIR}|g"
-    -e "s|{{PYTHON_VENV_PATH}}|${PYTHON_VENV_PATH}|g"
-    -e "s|{{BITMOVER_CONFIG_FILE}}|${BITMOVER_CONFIG_FILE}|g" # Uses the new BITMOVER_CONFIG_FILE variable
-    -e "s|{{BITMOVER_LOG_DIR}}|${BITMOVER_LOG_DIR}|g"
     -e "s#{{REMOTE_HOST_URL}}#${REMOTE_HOST_URL}#g"
   )
-  # ---- END MODIFICATION ----
-
   for template_file in "${systemd_template_files[@]}"; do
-    local unit_name
-    unit_name=$(basename "${template_file%.template}")
+    local unit_name; unit_name=$(basename "${template_file%.template}")
     local output_file="${SYSTEMD_DIR}/${unit_name}"
-    info "  Processing template '$template_file' -> '$output_file'..."
-    $DRY_RUN sed "${sed_replacements[@]}" "$template_file" > "$output_file" \
-      || error_exit "Failed to process template '$template_file'."
-    $DRY_RUN chmod 0644 "$output_file" \
-      || error_exit "Failed to set permissions on '$output_file'."
+    info "  Processing systemd template '$template_file' -> '$output_file'..."
+    $DRY_RUN sed "${sed_replacements_systemd[@]}" "$template_file" > "$output_file" \
+      || error_exit "Failed to process systemd template '$template_file'."
+    $DRY_RUN chmod 0644 "$output_file"
   done
-
   info "Reloading systemd daemon..."
-  # ---- MODIFICATION: Changed from warn to error_exit on failure ----
-  $DRY_RUN systemctl daemon-reload \
-    || error_exit "Failed to reload systemd daemon. Manual reload may be required or systemd is in a bad state."
-  # ---- END MODIFICATION ----
+  $DRY_RUN systemctl daemon-reload || error_exit "Failed to reload systemd daemon."
   info "Systemd units deployed."
 }
 
-deploy_application_configs(){
-  info "Deploying application configurations to '$ETC_DIR'..."
+deploy_application_configs() {
+  info "Deploying application configurations to '$ETC_DIR'"
   ensure_directory "$ETC_DIR" "root" "root" "0755"
-
   shopt -s nullglob
-  local common_config_files=("$COMMON_CFG_DIR"/*)
-  shopt -u nullglob
-
-  for src_cfg_file in "${common_config_files[@]}"; do
-    if [[ -f "$src_cfg_file" && $(basename "$src_cfg_file") != "config.ini.template" ]]; then
-      install_file "$src_cfg_file" "${ETC_DIR}/$(basename "$src_cfg_file")" \
-                   "root" "$APP_GROUP" "0640"
+  local common_configs_to_deploy=()
+  for f_path in "$COMMON_CFG_DIR"/*; do
+    if [[ -f "$f_path" && $(basename "$f_path") != "$WRAPPER_SCRIPT_TEMPLATE_NAME" && $(basename "$f_path") != "config.ini.template" ]]; then
+      common_configs_to_deploy+=("$f_path")
     fi
   done
+  shopt -u nullglob
 
-  local bitmover_template_path="${COMMON_CFG_DIR}/config.ini.template"
-  # local bitmover_config_path="${ETC_DIR}/config.ini" # Already defined as BITMOVER_CONFIG_FILE
+  if (( ${#common_configs_to_deploy[@]} > 0 )); then
+    for src_cfg_file in "${common_configs_to_deploy[@]}"; do
+      install_file_to_dest "$src_cfg_file" "$ETC_DIR/$(basename "$src_cfg_file")" "root" "$APP_GROUP" "0640"
+    done
+  else
+    info "No additional common config files (excluding templates) found in '$COMMON_CFG_DIR' to deploy."
+  fi
+
+  local bitmover_template_path="$COMMON_CFG_DIR/config.ini.template"
   if [[ -f "$bitmover_template_path" ]]; then
     info "Deploying Bitmover config from template '$bitmover_template_path' to '$BITMOVER_CONFIG_FILE'..."
     ensure_directory "$BITMOVER_LOG_DIR" "$APP_USER" "$APP_GROUP" "0770"
-
-    local sed_replacements=(
+    local sed_replacements_bitmover_cfg=(
       -e "s|{{BASE_DIR}}|${BASE_DIR}|g"
       -e "s|{{BITMOVER_LOG_DIR}}|${BITMOVER_LOG_DIR}|g"
       -e "s#{{REMOTE_HOST_URL}}#${REMOTE_HOST_URL}#g"
     )
-    $DRY_RUN sed "${sed_replacements[@]}" "$bitmover_template_path" > "$BITMOVER_CONFIG_FILE" \
+    $DRY_RUN sed "${sed_replacements_bitmover_cfg[@]}" "$bitmover_template_path" > "$BITMOVER_CONFIG_FILE" \
       || error_exit "Failed to generate '$BITMOVER_CONFIG_FILE' from template."
     $DRY_RUN chmod 0640 "$BITMOVER_CONFIG_FILE"
     $DRY_RUN chown "$APP_USER:$APP_GROUP" "$BITMOVER_CONFIG_FILE"
-    info "Bitmover config '$BITMOVER_CONFIG_FILE' deployed."
+    info "Bitmover config deployed."
   else
-    warn "Bitmover config template '$bitmover_template_path' not found. Skipping config.ini deployment."
+    warn "Bitmover config template 'config.ini.template' not found in '$COMMON_CFG_DIR'. Skipping its deployment."
   fi
-  info "Application configurations deployed."
+  info "Application configurations deployment finished."
 }
 
-save_environment_variables_file(){
-  info "Saving base environment variables to '$BASE_VARS_FILE'..."
-  local script_name
-  script_name=$(basename "$0")
-  local content
-  # ---- MODIFICATION: Added BITMOVER_CONFIG_FILE and new data directory variables ----
-  content=$(cat <<EOF
-# Base environment variables for ${APP_NAME}
-# Generated by ${script_name} on $(_ts)
+save_environment_variables_file() {
+  info "Saving base environment variables to '$BASE_VARS_FILE'"
+  ensure_directory "$(dirname "$BASE_VARS_FILE")" "root" "root" "0755"
+  # Using tee with a heredoc to write the content
+  $DRY_RUN tee "$BASE_VARS_FILE" > /dev/null <<EOF
+# Environment variables for ${APP_NAME}
+# Generated by $(basename "$0") on $(_ts)
+# This file is typically sourced by management scripts like configure_instance.sh
+
 export APP_NAME="${APP_NAME}"
 export APP_USER="${APP_USER}"
 export APP_GROUP="${APP_GROUP}"
 export BASE_DIR="${BASE_DIR}"
 export ETC_DIR="${ETC_DIR}"
-export TARGET_BINARY_PATH="${TARGET_BINARY_PATH}" # This is the fixed runtime path
+export SYMLINK_EXECUTABLE_PATH="${SYMLINK_EXECUTABLE_PATH}"
+export INSTALLED_VERSIONED_APP_BINARY_FILENAME="${VERSIONED_APP_BINARY_FILENAME}"
+export DEST_VERSIONED_APP_BINARY_PATH="${DEST_VERSIONED_APP_BINARY_PATH}"
+export INSTALLED_WRAPPER_SCRIPT_PATH="${INSTALLED_WRAPPER_SCRIPT_PATH}"
 export SOURCE_DATA_DIR="${SOURCE_DATA_DIR}"
 export CSV_DATA_DIR="${CSV_DATA_DIR}"
 export WORKER_DATA_DIR="${WORKER_DATA_DIR}"
 export UPLOADED_DATA_DIR="${UPLOADED_DATA_DIR}"
 export DEAD_LETTER_DATA_DIR="${DEAD_LETTER_DATA_DIR}"
 export PYTHON_VENV_PATH="${PYTHON_VENV_PATH}"
+export INSTALLED_VERSIONED_WHEEL_FILENAME="${VERSIONED_DATAMOVER_WHEEL_FILENAME}"
 export BITMOVER_LOG_DIR="${BITMOVER_LOG_DIR}"
 export BITMOVER_CONFIG_FILE="${BITMOVER_CONFIG_FILE}"
 export REMOTE_HOST_URL="${REMOTE_HOST_URL}"
-# Note: The actual source binary filename used for this install was: ${APPLICATION_BINARY_FILENAME:-Not Set or Error}
+export DEFAULT_CONFIGURE_INSTANCE_EXPORT_TIMEOUT="${EXPORT_TIMEOUT_CONFIG}"
 EOF
-)
-  # ---- END MODIFICATION ----
-  $DRY_RUN printf "%s\n" "$content" > "$BASE_VARS_FILE" \
-    || error_exit "Failed to write environment variables to '$BASE_VARS_FILE'."
-  $DRY_RUN chmod 0644 "$BASE_VARS_FILE" \
-    || error_exit "Failed to set permissions on '$BASE_VARS_FILE'."
+  $DRY_RUN chmod 0644 "$BASE_VARS_FILE"
   info "Base environment variables saved."
 }
 
-# ---- Main Installation Logic ----
-main(){
-  info "Starting installation of the '${APP_NAME}' application suite..."
-  info "Application User: $APP_USER, Application Group: $APP_GROUP"
-  info "Base Directory:   $BASE_DIR"
+# --- Main ---
+main() {
+  info "Starting installation/update of the '${APP_NAME}' application suite..."
   [[ -n "$DRY_RUN" ]] && warn "DRY RUN MODE ENABLED: No changes will be made to the system."
 
-  # 1. Create User and Group
   create_group_if_not_exists "$APP_GROUP"
   create_user_if_not_exists "$APP_USER" "$APP_GROUP" "$BASE_DIR"
 
-  # 2. Create Core Application Directories
-  ensure_directory "$ETC_DIR" "root" "root" "0755"
+  ensure_directory "$ETC_DIR"                "root"      "$APP_GROUP" "0755"
   ensure_directory "$BASE_DIR"              "$APP_USER" "$APP_GROUP" "0750"
-  ensure_directory "${BASE_DIR}/bin"        "$APP_USER" "$APP_GROUP" "0750"
+  ensure_directory "${BASE_DIR}/bin"        "root"      "$APP_GROUP" "0755"
   ensure_directory "$SOURCE_DATA_DIR"       "$APP_USER" "$APP_GROUP" "0770"
   ensure_directory "$CSV_DATA_DIR"          "$APP_USER" "$APP_GROUP" "0770"
   ensure_directory "$WORKER_DATA_DIR"       "$APP_USER" "$APP_GROUP" "0770"
   ensure_directory "$UPLOADED_DATA_DIR"     "$APP_USER" "$APP_GROUP" "0770"
   ensure_directory "$DEAD_LETTER_DATA_DIR"  "$APP_USER" "$APP_GROUP" "0770"
 
-  # 3. Install Application Binary
-  # Source is $SOURCE_BINARY_FILE_PATH (e.g. .../exportcliv2-v1.2.3)
-  # Destination is $TARGET_BINARY_PATH (e.g. /opt/exportcliv2/bin/exportcliv2)
-  install_file "$SOURCE_BINARY_FILE_PATH" "$TARGET_BINARY_PATH" \
+  install_file_to_dest "$SOURCE_VERSIONED_APP_BINARY_FILE_PATH" "$DEST_VERSIONED_APP_BINARY_PATH" \
                "root" "$APP_GROUP" "0750"
+  info "Creating/updating symlink '$SYMLINK_EXECUTABLE_PATH' -> '$VERSIONED_APP_BINARY_FILENAME'"
+  $DRY_RUN pushd "${BASE_DIR}/bin" >/dev/null
+  $DRY_RUN ln -snf "$VERSIONED_APP_BINARY_FILENAME" "$APP_NAME"
+  $DRY_RUN popd >/dev/null
+  info "Symlink processed."
 
-  # 4. Setup Python Virtual Environment and Install Dependencies
-  setup_python_venv "$PYTHON_VENV_PATH" "$WHEEL_PATH" "$APP_USER" "$APP_GROUP"
-
-  # 5. Deploy Systemd Unit Files
+  deploy_wrapper_script
+  setup_python_venv "$PYTHON_VENV_PATH" "$SOURCE_VERSIONED_WHEEL_FILE_PATH" "$APP_USER" "$APP_GROUP"
   deploy_systemd_units
-
-  # 6. Deploy Application Configuration Files
   deploy_application_configs
-
-  # 7. Save Base Environment Variables
   save_environment_variables_file
 
-  info "-----------------------------------------------------------------------"
-  info "Installation of '${APP_NAME}' application suite complete!"
-  info "Source binary used: '$APPLICATION_BINARY_FILENAME'"
-  info "Installed to: '$TARGET_BINARY_PATH'"
-  if [[ -n "$DRY_RUN" ]]; then
-    warn "DRY RUN MODE was enabled. No actual changes were made."
-  else
-    info "Review systemd unit status and start/enable services as needed."
-    info "Example for bitmover: systemctl enable bitmover.service && systemctl start bitmover.service"
-    info "Use configure_instance.sh to set up and manage '${APP_NAME}' instances."
+  info "Installation/update of '${APP_NAME}' application suite processing complete."
+  info "  Main binary: '$VERSIONED_APP_BINARY_FILENAME' -> '$DEST_VERSIONED_APP_BINARY_PATH' (linked via '$SYMLINK_EXECUTABLE_PATH')"
+  info "  Wrapper script for instances: '$INSTALLED_WRAPPER_SCRIPT_PATH'"
+  info "  Datamover wheel: '$VERSIONED_DATAMOVER_WHEEL_FILENAME' in '$PYTHON_VENV_PATH'"
+  info "  Default instance EXPORT_TIMEOUT (from install-app.conf): '${EXPORT_TIMEOUT_CONFIG}' seconds (stored in '$BASE_VARS_FILE')"
+
+  if [[ "$RESTART_SERVICES" == true && -z "$DRY_RUN" ]]; then
+    info "Attempting to restart services due to -r flag..."
+    if systemctl list-unit-files | grep -q "^bitmover.service"; then
+        info "Restarting bitmover.service..."
+        systemctl restart bitmover.service || warn "Failed to restart bitmover.service. Check status manually."
+    fi
+    # CORRECTED: systemctl list-units invocation
+    mapfile -t running_instances < <(systemctl list-units --type=service --all --no-legend --plain "${APP_NAME}@*.service" | awk '{print $1}')
+    if (( ${#running_instances[@]} > 0 )); then
+        info "Restarting currently active/loaded ${APP_NAME} instances: ${running_instances[*]}"
+        for service_instance in "${running_instances[@]}"; do
+            systemctl restart "$service_instance" || warn "Failed to restart $service_instance. Check status manually."
+        done
+    else
+        info "No active/loaded ${APP_NAME}@*.service instances found to restart."
+    fi
+  elif [[ -z "$DRY_RUN" ]]; then
+    info "To apply changes, services might need to be (re)started manually or by re-running with -r."
+    info "Example: systemctl restart bitmover.service && systemctl restart ${APP_NAME}@your_instance.service"
   fi
-  info "-----------------------------------------------------------------------"
+
+  if [[ -n "$DRY_RUN" ]]; then
+    warn "DRY RUN MODE was enabled. No actual changes were made to the system."
+  fi
+  info "-------------------- INSTALLATION SCRIPT FINISHED --------------------"
 }
 
 # --- Execute Main ---
