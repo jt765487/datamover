@@ -4,15 +4,14 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # -----------------------------------------------------------------------------
-# Base Installer for exportcliv2 + bitmover (Combined Logic Version - Corrected)
-# Merges internal review structure with detailed placeholder replacement logic.
-# Incorporates fixes for readonly assignment, getopts clarity, and systemctl pattern.
+# Base Installer for exportcliv2 + bitmover
+# Improved dry-run output for environment variables file.
 # -----------------------------------------------------------------------------
 
 # --- Logging & Globals ---
-_ts()   { date -u +'%Y-%m-%dT%H:%M:%SZ'; }
-info()  { echo "$(_ts) [INFO]  $*"; }
-warn()  { echo "$(_ts) [WARN]  $*"; }
+_ts()  { date -u +'%Y-%m-%dT%H:%M:%SZ'; }
+info() { echo "$(_ts) [INFO]  $*"; }
+warn() { echo "$(_ts) [WARN]  $*"; }
 error_exit() { echo "$(_ts) [ERROR] $*" >&2; exit 1; }
 
 cleanup() {
@@ -24,19 +23,19 @@ cleanup() {
 }
 
 trap 'cleanup $?' ERR
-trap 'cleanup 0' EXIT
+trap 'cleanup 0' EXIT # Ensures cleanup runs on normal exit too, can be used for temp file removal etc.
 
 readonly APP_NAME="exportcliv2"
 
 # --- Argument Parsing ---
 CONFIG_FILE_PATH="install-app.conf"
 DRY_RUN=""
-RESTART_SERVICES=false
-LOG_FILE=""
+# RESTART_SERVICES=false # Removed
+# LOG_FILE=""           # Removed
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [-c <config_file>] [-n] [-r] [-l <log_file>] [-h]
+Usage: $(basename "$0") [-c <config_file>] [-n] [-h]
 
 Installs or updates the '${APP_NAME}' application suite.
 This script MUST be run as root or with sudo.
@@ -44,20 +43,19 @@ This script MUST be run as root or with sudo.
 Options:
   -c <config_file>  Configuration file to use (default: ./install-app.conf).
   -n                Dry-run mode (print commands instead of executing).
-  -r                Restart services on successful completion (if not in dry-run).
-  -l <log_file>     Append all stdout/stderr to <log_file>.
   -h                Show this help message and exit.
 EOF
   exit 0
 }
 
 # CORRECTED: getopts string order (cosmetic, for clarity)
-while getopts ":nrhlc:l:" o; do # Flags first, then options requiring arguments
+# Removed 'r' and 'l:' from getopts string
+while getopts ":nhc:" o; do # Flags first, then options requiring arguments
   case $o in
     c) CONFIG_FILE_PATH="$OPTARG" ;;
     n) DRY_RUN="echo" ;;
-    r) RESTART_SERVICES=true ;;
-    l) LOG_FILE="$OPTARG" ;;
+    # r) RESTART_SERVICES=true ;; # Removed
+    # l) LOG_FILE="$OPTARG" ;;    # Removed
     h) usage ;;
     \?) error_exit "Invalid option: -$OPTARG. Use -h for help." ;;
     :) error_exit "Option -$OPTARG requires an argument. Use -h for help." ;;
@@ -66,17 +64,7 @@ done
 shift $((OPTIND -1))
 
 # --- Setup Logging to File (if specified) ---
-if [[ -n "$LOG_FILE" ]]; then
-  if [[ "$LOG_FILE" == */* ]]; then
-      log_dir_path="$(dirname "$LOG_FILE")"
-      if ! mkdir -p "$log_dir_path"; then # Not using $DRY_RUN for log setup
-          echo "$(_ts) [ERROR] Failed to create log directory: $log_dir_path" >&2; exit 1;
-      fi
-  fi
-  # Append to log file AND send to original stdout/stderr
-  exec > >(tee -a "$LOG_FILE") 2>&1
-  info "Logging all output to '$LOG_FILE'"
-fi
+# This entire block was removed as -l option is gone. Output goes to stdout/stderr.
 
 # --- Root Execution Check ---
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -151,8 +139,8 @@ readonly SOURCE_VERSIONED_WHEEL_FILE_PATH="${SCRIPT_DIR}/${VERSIONED_DATAMOVER_W
 info "Running pre-flight checks..."
 [[ -f "$SOURCE_VERSIONED_APP_BINARY_FILE_PATH" ]] || error_exit "Application binary not found: $SOURCE_VERSIONED_APP_BINARY_FILE_PATH"
 [[ -f "$SOURCE_VERSIONED_WHEEL_FILE_PATH" ]]   || error_exit "Datamover wheel not found: $SOURCE_VERSIONED_WHEEL_FILE_PATH"
-[[ -f "$WRAPPER_TEMPLATE_PATH" ]]            || error_exit "Wrapper script template not found: $WRAPPER_TEMPLATE_PATH"
-[[ -d "$TEMPLATES_DIR" ]]                   || error_exit "Systemd templates directory not found: $TEMPLATES_DIR"
+[[ -f "$WRAPPER_TEMPLATE_PATH" ]]               || error_exit "Wrapper script template not found: $WRAPPER_TEMPLATE_PATH"
+[[ -d "$TEMPLATES_DIR" ]]                       || error_exit "Systemd templates directory not found: $TEMPLATES_DIR"
 
 shopt -s nullglob
 mapfile -t systemd_template_files < <(find "$TEMPLATES_DIR" -maxdepth 1 -name "*.template" -print)
@@ -160,7 +148,8 @@ shopt -u nullglob
 (( ${#systemd_template_files[@]} > 0 )) || error_exit "No .template files found in $TEMPLATES_DIR"
 info "Found ${#systemd_template_files[@]} systemd template(s)."
 
-required_commands=(getent groupadd useradd install sed systemctl python3 find id chown ln basename pushd popd date mkdir printf awk tee) # Added awk, tee
+# Removed 'awk' and 'tee' from required_commands
+required_commands=(getent groupadd useradd install sed systemctl python3 find id chown ln basename pushd popd date mkdir printf)
 for cmd in "${required_commands[@]}"; do
   command -v "$cmd" &>/dev/null || error_exit "Required command '$cmd' is not installed or not in PATH."
 done
@@ -205,7 +194,7 @@ install_file_to_dest() {
 
 setup_python_venv() {
   local venv_path="$1"; local wheel_to_install="$2"; local venv_owner="$3"; local venv_group="$4"
-  ensure_directory "$(dirname "$venv_path")" "$venv_owner" "$venv_group" "0755"
+  ensure_directory "$(dirname "$venv_path")" "$venv_owner" "$venv_group" "0755" # Base dir for venv
   local pip_executable="${venv_path}/bin/pip"
   if [[ -f "$pip_executable" ]]; then
     info "Python virtual environment likely exists at '$venv_path'."
@@ -256,7 +245,7 @@ deploy_systemd_units() {
     -e "s|{{WORKER_DATA_DIR}}|${WORKER_DATA_DIR}|g"
     -e "s|{{UPLOADED_DATA_DIR}}|${UPLOADED_DATA_DIR}|g"
     -e "s|{{DEAD_LETTER_DATA_DIR}}|${DEAD_LETTER_DATA_DIR}|g"
-    -e "s#{{REMOTE_HOST_URL}}#${REMOTE_HOST_URL}#g"
+    -e "s#{{REMOTE_HOST_URL}}#${REMOTE_HOST_URL}#g" # Use # as delimiter for URLs
   )
   for template_file in "${systemd_template_files[@]}"; do
     local unit_name; unit_name=$(basename "${template_file%.template}")
@@ -298,7 +287,7 @@ deploy_application_configs() {
     local sed_replacements_bitmover_cfg=(
       -e "s|{{BASE_DIR}}|${BASE_DIR}|g"
       -e "s|{{BITMOVER_LOG_DIR}}|${BITMOVER_LOG_DIR}|g"
-      -e "s#{{REMOTE_HOST_URL}}#${REMOTE_HOST_URL}#g"
+      -e "s#{{REMOTE_HOST_URL}}#${REMOTE_HOST_URL}#g" # Use # as delimiter for URLs
     )
     $DRY_RUN sed "${sed_replacements_bitmover_cfg[@]}" "$bitmover_template_path" > "$BITMOVER_CONFIG_FILE" \
       || error_exit "Failed to generate '$BITMOVER_CONFIG_FILE' from template."
@@ -313,9 +302,10 @@ deploy_application_configs() {
 
 save_environment_variables_file() {
   info "Saving base environment variables to '$BASE_VARS_FILE'"
-  ensure_directory "$(dirname "$BASE_VARS_FILE")" "root" "root" "0755"
-  # Using tee with a heredoc to write the content
-  $DRY_RUN tee "$BASE_VARS_FILE" > /dev/null <<EOF
+
+  # Prepare the content for the environment variables file
+  local file_content
+  file_content=$(cat <<EOF
 # Environment variables for ${APP_NAME}
 # Generated by $(basename "$0") on $(_ts)
 # This file is typically sourced by management scripts like configure_instance.sh
@@ -341,8 +331,21 @@ export BITMOVER_CONFIG_FILE="${BITMOVER_CONFIG_FILE}"
 export REMOTE_HOST_URL="${REMOTE_HOST_URL}"
 export DEFAULT_CONFIGURE_INSTANCE_EXPORT_TIMEOUT="${EXPORT_TIMEOUT_CONFIG}"
 EOF
-  $DRY_RUN chmod 0644 "$BASE_VARS_FILE"
-  info "Base environment variables saved."
+)
+
+  if [[ -n "$DRY_RUN" ]]; then
+    # In DRY_RUN, echo the ensure_directory command and the content
+    echo "DRY RUN: ensure_directory \"$(dirname "$BASE_VARS_FILE")\" \"root\" \"root\" \"0755\""
+    info "DRY RUN: Would write the following content to '$BASE_VARS_FILE':"
+    echo "$file_content" # This will be captured by script's main logging if any
+    echo "DRY RUN: chmod 0644 \"$BASE_VARS_FILE\""
+  else
+    ensure_directory "$(dirname "$BASE_VARS_FILE")" "root" "root" "0755"
+    # Use printf to write the content to the file
+    printf "%s\n" "$file_content" > "$BASE_VARS_FILE" || error_exit "Failed to write to '$BASE_VARS_FILE'"
+    chmod 0644 "$BASE_VARS_FILE" || error_exit "Failed to set permissions on '$BASE_VARS_FILE'"
+  fi
+  info "Base environment variables file processed."
 }
 
 # --- Main ---
@@ -353,14 +356,14 @@ main() {
   create_group_if_not_exists "$APP_GROUP"
   create_user_if_not_exists "$APP_USER" "$APP_GROUP" "$BASE_DIR"
 
-  ensure_directory "$ETC_DIR"                "root"      "$APP_GROUP" "0755"
-  ensure_directory "$BASE_DIR"              "$APP_USER" "$APP_GROUP" "0750"
-  ensure_directory "${BASE_DIR}/bin"        "root"      "$APP_GROUP" "0755"
-  ensure_directory "$SOURCE_DATA_DIR"       "$APP_USER" "$APP_GROUP" "0770"
-  ensure_directory "$CSV_DATA_DIR"          "$APP_USER" "$APP_GROUP" "0770"
-  ensure_directory "$WORKER_DATA_DIR"       "$APP_USER" "$APP_GROUP" "0770"
-  ensure_directory "$UPLOADED_DATA_DIR"     "$APP_USER" "$APP_GROUP" "0770"
-  ensure_directory "$DEAD_LETTER_DATA_DIR"  "$APP_USER" "$APP_GROUP" "0770"
+  ensure_directory "$ETC_DIR"                 "root"      "$APP_GROUP" "0755"
+  ensure_directory "$BASE_DIR"                "$APP_USER" "$APP_GROUP" "0750"
+  ensure_directory "${BASE_DIR}/bin"          "root"      "$APP_GROUP" "0755"
+  ensure_directory "$SOURCE_DATA_DIR"         "$APP_USER" "$APP_GROUP" "0770"
+  ensure_directory "$CSV_DATA_DIR"            "$APP_USER" "$APP_GROUP" "0770"
+  ensure_directory "$WORKER_DATA_DIR"         "$APP_USER" "$APP_GROUP" "0770"
+  ensure_directory "$UPLOADED_DATA_DIR"       "$APP_USER" "$APP_GROUP" "0770"
+  ensure_directory "$DEAD_LETTER_DATA_DIR"    "$APP_USER" "$APP_GROUP" "0770"
 
   install_file_to_dest "$SOURCE_VERSIONED_APP_BINARY_FILE_PATH" "$DEST_VERSIONED_APP_BINARY_PATH" \
                "root" "$APP_GROUP" "0750"
@@ -382,24 +385,9 @@ main() {
   info "  Datamover wheel: '$VERSIONED_DATAMOVER_WHEEL_FILENAME' in '$PYTHON_VENV_PATH'"
   info "  Default instance EXPORT_TIMEOUT (from install-app.conf): '${EXPORT_TIMEOUT_CONFIG}' seconds (stored in '$BASE_VARS_FILE')"
 
-  if [[ "$RESTART_SERVICES" == true && -z "$DRY_RUN" ]]; then
-    info "Attempting to restart services due to -r flag..."
-    if systemctl list-unit-files | grep -q "^bitmover.service"; then
-        info "Restarting bitmover.service..."
-        systemctl restart bitmover.service || warn "Failed to restart bitmover.service. Check status manually."
-    fi
-    # CORRECTED: systemctl list-units invocation
-    mapfile -t running_instances < <(systemctl list-units --type=service --all --no-legend --plain "${APP_NAME}@*.service" | awk '{print $1}')
-    if (( ${#running_instances[@]} > 0 )); then
-        info "Restarting currently active/loaded ${APP_NAME} instances: ${running_instances[*]}"
-        for service_instance in "${running_instances[@]}"; do
-            systemctl restart "$service_instance" || warn "Failed to restart $service_instance. Check status manually."
-        done
-    else
-        info "No active/loaded ${APP_NAME}@*.service instances found to restart."
-    fi
-  elif [[ -z "$DRY_RUN" ]]; then
-    info "To apply changes, services might need to be (re)started manually or by re-running with -r."
+  # Removed service restart block
+  if [[ -z "$DRY_RUN" ]]; then
+    info "To apply changes, services might need to be (re)started manually."
     info "Example: systemctl restart bitmover.service && systemctl restart ${APP_NAME}@your_instance.service"
   fi
 
