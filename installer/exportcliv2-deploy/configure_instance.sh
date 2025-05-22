@@ -29,13 +29,15 @@ warn() { echo "$(_ts) [WARN]  $*"; }
 error_exit() {
   local message="$1"
   local exit_code="${2:-$EXIT_CODE_GENERAL_ERROR}"
-  echo "$(_ts) [ERROR] $message" >&2
+  echo "$(_ts) [ERROR]  $message" >&2
   exit "$exit_code"
 }
 
 SCRIPT_SUCCESSFUL=false # Flag to indicate successful completion for EXIT trap
 
+# shellcheck disable=SC2317
 cleanup_on_error() {
+
   local exit_code="${1:-$?}"
   local line_num="${2:-UNKNOWN_LINE}"
   local failed_command="${3:-UNKNOWN_COMMAND}"
@@ -47,6 +49,7 @@ cleanup_on_error() {
   SCRIPT_SUCCESSFUL=false # Ensure it's false on any error
 }
 
+# shellcheck disable=SC2317
 cleanup_on_exit() {
     local exit_code="${1:-$?}"
     if [[ "$SCRIPT_SUCCESSFUL" == true && "$exit_code" -eq "$EXIT_CODE_SUCCESS" ]]; then
@@ -158,7 +161,7 @@ fi
 info "Validated instance name: \"${INSTANCE}\""
 
 # --- Pre-flight check for required commands ---
-required_commands=(getent install date id basename chmod chown printf mkdir sed)
+required_commands=(getent install date id basename chmod chown printf mkdir)
 info "Checking for required commands..."
 for cmd in "${required_commands[@]}"; do
   command -v "$cmd" &>/dev/null || error_exit "Required command \"${cmd}\" is not installed or not in PATH." "$EXIT_CODE_PREREQUISITE_ERROR"

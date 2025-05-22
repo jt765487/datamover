@@ -436,13 +436,8 @@ SCRIPT_SUCCESSFUL=true # If main completes (or returns early for status-only) wi
 
 # --- Summary & Final Exit based on FAIL_COUNT ---
 if [[ "$DRY_RUN" == true ]]; then
-    if (( FAIL_COUNT > 0 )); then
-        warn "[DRY-RUN] Orchestration dry run indicated $FAIL_COUNT potential non-fatal issues from sub-commands."
-    else
-        # Only print generic dry run complete if not a status-only mode, which has its own conclusion.
-        if [[ "$OPERATION_MODE" != "status-only" ]]; then
-             info "[DRY-RUN] Orchestration dry run completed."
-        fi
+    if [[ "$OPERATION_MODE" != "status-only" ]]; then # Avoid redundant summary for status-only
+         info "[DRY-RUN] Orchestration dry run scan completed. Review output for proposed actions."
     fi
 fi
 
