@@ -3,16 +3,17 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # -----------------------------------------------------------------------------
-# v2 Deployment Orchestrator (Further Polished)
+# v2 Deployment Orchestrator (Further Polished & Verbosity Control)
 # -----------------------------------------------------------------------------
-VERSION="2.2.3" # Minor polishes based on review
+VERSION="2.3.2" # Improved error guidance for sub-script failures
 
 # --- Colorized Logging ---
-CSI="\033["
+CSI=$'\033[' # Use ANSI-C quoting for literal ESCAPE
 C_RESET="${CSI}0m"
 C_INFO="${CSI}32m"  # Green
 C_WARN="${CSI}33m"  # Yellow
 C_ERROR="${CSI}31m" # Red
+C_DEBUG="${CSI}36m" # Cyan for debug messages
 
 # --- Exit Codes ---
 readonly EXIT_CODE_SUCCESS=0
@@ -25,8 +26,13 @@ readonly EXIT_CODE_FILE_ERROR=6
 
 # --- Logging ---
 _ts()        { date -u +'%Y-%m-%dT%H:%M:%SZ'; }
-info()       { echo -e "${C_INFO}$(_ts) [INFO]  $*${C_RESET}" >&2; }
-warn()       { echo -e "${C_WARN}$(_ts) [WARN]  $*${C_RESET}" >&2; }
+info()       { echo -e "${C_INFO}$(_ts) [INFO]  $@${C_RESET}" >&2; }
+warn()       { echo -e "${C_WARN}$(_ts) [WARN]  $@${C_RESET}" >&2; }
+debug() {
+  if [[ "$VERBOSE_MODE" == true ]]; then
+    echo -e "${C_DEBUG}$(_ts) [DEBUG] $@${C_RESET}" >&2
+  fi
+}
 error_exit() {
   local message="$1"
   local exit_code="${2:-$EXIT_CODE_FATAL_ERROR}"
@@ -45,7 +51,6 @@ VERBOSE_MODE=false
 OPERATION_MODE="" # "install", "update", or "status-only"
 FORCE_INSTANCE_CONFIG=false
 RESTART_SERVICES_ON_UPDATE=false
-# STATUS_ONLY_MODE removed; will use OPERATION_MODE directly
 
 FAIL_COUNT=0
 SCRIPT_SUCCESSFUL=false
@@ -57,33 +62,33 @@ SCRIPTS_TO_CHECK=(install_base_exportcliv2.sh configure_instance.sh manage_servi
 LOCKFILE_DIR="/tmp"
 LOCKFILE="${LOCKFILE_DIR}/$(basename "$0" ".sh").lock"
 
-MAIN_PUSHED_DIR=false # Global flag for EXIT trap to manage popd
+MAIN_PUSHED_DIR=false
 
 # --- Dependency checks ---
 dependency_check() {
   local cmds_to_check=(flock date chmod dirname basename readlink realpath)
-  info "Checking for core orchestrator commands: ${cmds_to_check[*]}"
+  debug "Checking for core orchestrator commands: ${cmds_to_check[*]}"
   for cmd_to_check in "${cmds_to_check[@]}"; do
     if ! command -v "$cmd_to_check" &>/dev/null; then
       error_exit "Required command '$cmd_to_check' not found in PATH." "$EXIT_CODE_PREREQUISITE_ERROR"
     fi
   done
-  info "Core orchestrator commands found."
+  debug "Core orchestrator commands found."
 }
 
 # --- Locking with flock ---
 acquire_lock() {
-  info "Attempting to acquire execution lock: $LOCKFILE"
+  debug "Attempting to acquire execution lock: $LOCKFILE"
   mkdir -p "$LOCKFILE_DIR" || error_exit "Failed to create lock directory $LOCKFILE_DIR" "$EXIT_CODE_FATAL_ERROR"
   exec 200>"$LOCKFILE"
   if ! flock -n 200; then
     local locker_pid
     locker_pid=$(head -n 1 "$LOCKFILE" 2>/dev/null || echo "unknown")
-    error_exit "Another instance is running (reported PID: ${locker_pid}, lockfile: $LOCKFILE)." "$EXIT_CODE_FATAL_ERROR"
+    error_exit "Another instance is running (lockfile: ${LOCKFILE}, reported locker PID: ${locker_pid})." "$EXIT_CODE_FATAL_ERROR"
   fi
   echo "$$" >&200
   SCRIPT_RUNNING_LOCK=true
-  info "Execution lock acquired (PID: $$)."
+  debug "Execution lock acquired (PID: $$)."
   trap _master_exit_trap EXIT
 }
 
@@ -91,9 +96,9 @@ acquire_lock() {
 # shellcheck disable=SC2317
 _master_exit_trap() {
     local final_exit_code=$?
-    if [[ "$MAIN_PUSHED_DIR" == true ]]; then # Check before lock, in case lock acquisition failed after pushd (unlikely)
+    if [[ "$MAIN_PUSHED_DIR" == true ]]; then
         if popd >/dev/null; then
-             info "Returned from source directory."
+             debug "Returned from source directory."
         else
             warn "Failed to popd from source directory. Current directory: $(pwd)"
         fi
@@ -101,12 +106,11 @@ _master_exit_trap() {
     fi
     if [[ "$SCRIPT_RUNNING_LOCK" == true ]]; then
         if rm -f "$LOCKFILE"; then
-          info "Execution lock released: $LOCKFILE"
+          debug "Execution lock released: $LOCKFILE"
         else
           warn "Failed to remove lockfile: $LOCKFILE. Manual cleanup may be needed."
         fi
         SCRIPT_RUNNING_LOCK=false
-        # flock -u 200; exec 200>&- # Optional explicit release/close
     fi
     _final_summary_message "$final_exit_code"
 }
@@ -115,13 +119,14 @@ _master_exit_trap() {
 _final_summary_message() {
     local exit_code="$1"
     if [[ "$HELP_OR_VERSION_EXIT" == true ]]; then :
-    elif [[ "$OPERATION_MODE" == "status-only" && "$SCRIPT_SUCCESSFUL" == true && "$exit_code" -eq "$EXIT_CODE_SUCCESS" ]]; then : # CORRECTED: Use OPERATION_MODE
+    elif [[ "$OPERATION_MODE" == "status-only" && "$SCRIPT_SUCCESSFUL" == true && "$exit_code" -eq "$EXIT_CODE_SUCCESS" ]]; then
+        info "Status check completed."
     elif [[ "$SCRIPT_SUCCESSFUL" == true && "$exit_code" -eq "$EXIT_CODE_SUCCESS" ]]; then
         info "-------------------- ORCHESTRATION COMPLETED SUCCESSFULLY --------------------"
     elif [[ "$exit_code" -eq "$EXIT_CODE_PARTIAL_SUCCESS" && "$SCRIPT_SUCCESSFUL" == true ]]; then
         warn "-------------------- ORCHESTRATION COMPLETED WITH NON-FATAL ERRORS (EXIT CODE: $exit_code) --------------------"
     elif [[ "$exit_code" -ne "$EXIT_CODE_SUCCESS" ]]; then
-        info "-------------------- ORCHESTRATION FAILED (EXIT CODE: $exit_code) --------------------"
+        echo -e "${C_ERROR}$(_ts) [ERROR] -------------------- ORCHESTRATION FAILED (EXIT CODE: $exit_code) --------------------${C_RESET}" >&2
     fi
 }
 
@@ -159,11 +164,11 @@ run() {
   fi
 
   if [[ "$DRY_RUN" == true ]]; then
-    echo -e "${C_INFO}$(_ts) [DRY-RUN] Would execute: $cmd_display_str${C_RESET}" >&2
+    info "$(_ts) [DRY-RUN] Would execute: $cmd_display_str"
     return 0
   fi
 
-  info "Running: $cmd_display_str"
+  debug "Executing: $cmd_display_str"
   set +e
   "$@"
   local ec=$?
@@ -181,6 +186,14 @@ usage() {
   if [[ "$exit_code" -eq "$EXIT_CODE_SUCCESS" ]]; then
       HELP_OR_VERSION_EXIT=true
   fi
+
+  local default_instances_str
+  if ((${#DEFAULT_INSTANCES[@]} > 0)); then
+    default_instances_str=$(IFS=' '; echo "${DEFAULT_INSTANCES[*]}")
+  else
+    default_instances_str="(none defined)"
+  fi
+
   cat <<EOF
 Usage: $(basename "$0") [OPTIONS] --install|--update|--status-only
 
@@ -195,10 +208,10 @@ General Options:
   -c, --config FILE         Base install config filename (inside source-dir).
                             Default: $BASE_CONFIG
   -i, --instances LIST      Comma-separated instance names to configure/manage.
-                            Default for --install or --status-only: ${DEFAULT_INSTANCES[*]}
+                            Default for --install or --status-only: $default_instances_str
   --force-reconfigure       During --install, force overwrite of existing instance configs.
   -n, --dry-run             Show commands without executing.
-  -v, --verbose             Enable verbose shell tracing (set -x).
+  -v, --verbose             Enable verbose shell tracing (set -x) and debug messages.
   -r, --restart-services    (For --update mode only) Restart services after update.
   --list-default-instances  Show default instance names and exit.
   -h, --help                Show this help and exit.
@@ -217,7 +230,13 @@ EOF
 }
 
 list_defaults() {
-  echo "Default instances configured in this script: ${DEFAULT_INSTANCES[*]}"
+  local default_instances_str
+  if ((${#DEFAULT_INSTANCES[@]} > 0)); then
+    default_instances_str=$(IFS=' '; echo "${DEFAULT_INSTANCES[*]}")
+  else
+    default_instances_str="(none defined)"
+  fi
+  echo "Default instances configured in this script: $default_instances_str"
   HELP_OR_VERSION_EXIT=true
   exit "$EXIT_CODE_SUCCESS"
 }
@@ -242,10 +261,11 @@ while [[ $# -gt 0 ]]; do
       OPERATION_MODE="update"; shift;;
     --status-only)
       if [[ -n "$OPERATION_MODE" ]]; then error_exit "Cannot specify more than one operation mode." "$EXIT_CODE_USAGE_ERROR"; fi
-      OPERATION_MODE="status-only"; shift;; # No need for STATUS_ONLY_MODE=true
+      OPERATION_MODE="status-only"; shift;;
     -s|--source-dir)
       if [[ -z "${2:-}" ]]; then error_exit "Option $1 requires a DIR argument." "$EXIT_CODE_USAGE_ERROR"; fi
-      SOURCE_DIR="$2"; shift 2;;
+      SOURCE_DIR="$(realpath "${2}")" || error_exit "Invalid source directory: $2" "$EXIT_CODE_USAGE_ERROR"
+      shift 2;;
     -c|--config)
       if [[ -z "${2:-}" ]]; then error_exit "Option $1 requires a FILE argument." "$EXIT_CODE_USAGE_ERROR"; fi
       BASE_CONFIG="$2"; shift 2;;
@@ -275,7 +295,7 @@ fi
 info "Operation Mode: $OPERATION_MODE"
 
 if [[ "$VERBOSE_MODE" == true ]]; then
-  info "Verbose mode enabled (set -x is active for subsequent commands)."
+  info "Verbose mode enabled (set -x is active for subsequent commands, debug messages shown)."
   set -x
 fi
 
@@ -287,15 +307,20 @@ if [[ -n "$INSTANCE_NAMES_STRING" ]]; then
     trimmed_inst="${trimmed_inst%"${trimmed_inst##*[![:space:]]}"}"
     if [[ -n "$trimmed_inst" ]]; then
       if ! [[ "$trimmed_inst" =~ ^[A-Za-z0-9._-]+$ ]]; then
-        error_exit "Invalid instance name format in list: '$trimmed_inst' (from '$inst_val')." "$EXIT_CODE_USAGE_ERROR"
+        error_exit "Invalid instance name format in list: '$trimmed_inst' (from '$inst_val'). Only alphanumeric, '.', '_', '-' allowed." "$EXIT_CODE_USAGE_ERROR"
       fi
       PARSED_INSTANCE_NAMES+=("$trimmed_inst")
     fi
   done
-elif [[ "$OPERATION_MODE" == "install" || "$OPERATION_MODE" == "status-only" ]]; then # CORRECTED: Use OPERATION_MODE
+  if (( ${#PARSED_INSTANCE_NAMES[@]} > 0 )); then
+    info "Operating on specified instances:" "${PARSED_INSTANCE_NAMES[@]}"
+  else
+    info "Instance list provided via -i was empty after parsing."
+  fi
+elif [[ "$OPERATION_MODE" == "install" || "$OPERATION_MODE" == "status-only" ]]; then
   if (( ${#DEFAULT_INSTANCES[@]} > 0 )); then
     PARSED_INSTANCE_NAMES=("${DEFAULT_INSTANCES[@]}")
-    info "No instances specified with -i; using default instances for $OPERATION_MODE: ${PARSED_INSTANCE_NAMES[*]}"
+    info "No instances specified with -i; using default instances for $OPERATION_MODE:" "${PARSED_INSTANCE_NAMES[@]}"
   else
     info "No instances specified with -i and no defaults defined for $OPERATION_MODE."
   fi
@@ -304,14 +329,16 @@ fi
 dependency_check
 acquire_lock
 
-if [[ "$DRY_RUN" != true && "$OPERATION_MODE" != "status-only" ]]; then # CORRECTED: Use OPERATION_MODE
+if [[ "$DRY_RUN" != true && "$OPERATION_MODE" != "status-only" ]]; then
   confirm_prompt="Proceed with $OPERATION_MODE"
   if (( ${#PARSED_INSTANCE_NAMES[@]} > 0 )); then
-    confirm_prompt+=" on instances: ${PARSED_INSTANCE_NAMES[*]}"
+    instances_list_str=""
+    printf -v instances_list_str '%s ' "${PARSED_INSTANCE_NAMES[@]}"
+    instances_list_str="${instances_list_str% }"
+    confirm_prompt+=" on instances: $instances_list_str"
   elif [[ "$OPERATION_MODE" == "install" || "$OPERATION_MODE" == "update" ]]; then
-     confirm_prompt+=" (base service operations primarily)"
+     confirm_prompt+=" (base system operations primarily)"
   fi
-  # Ensure prompt uses color reset if C_WARN is used
   read -r -p "${C_WARN}${confirm_prompt}? [y/N] ${C_RESET}" yn
   case "$yn" in
     [Yy]*) info "Proceeding based on user confirmation." ;;
@@ -319,19 +346,16 @@ if [[ "$DRY_RUN" != true && "$OPERATION_MODE" != "status-only" ]]; then # CORREC
   esac
 fi
 
-# --- Main Application Logic ---
 main() {
   info "▶ Orchestrator v$VERSION starting (Mode: $OPERATION_MODE)"
 
   if ! pushd "$SOURCE_DIR" >/dev/null; then
-    # EXIT trap (_master_exit_trap) will call cleanup_lock
     error_exit "Failed to change directory to '$SOURCE_DIR'." "$EXIT_CODE_FATAL_ERROR"
   fi
-  MAIN_PUSHED_DIR=true # Signal for EXIT trap to popd
+  MAIN_PUSHED_DIR=true
+  debug "Working directory: $(pwd)"
 
-  info "Working directory: $(pwd)"
-
-  if [[ "$OPERATION_MODE" == "status-only" ]]; then # CORRECTED: Use OPERATION_MODE
+  if [[ "$OPERATION_MODE" == "status-only" ]]; then
     info "▶ Performing service status checks only..."
     local checked_something_status=false
     info "--- Bitmover Service Status ---"
@@ -343,22 +367,23 @@ main() {
       for inst_name_status_check in "${PARSED_INSTANCE_NAMES[@]}"; do
         run ./manage_services.sh ${DRY_RUN:+-n} -i "$inst_name_status_check" --status
       done
-    elif [[ "$checked_something_status" != true ]]; then # This condition is unlikely to be met
+    elif [[ "$checked_something_status" != true ]]; then
         info "No specific instances provided via -i and no defaults available for status check."
     fi
-    # SCRIPT_SUCCESSFUL is set after main() call for this path
-    return # from main, skip further processing in main
+    SCRIPT_SUCCESSFUL=true
+    return
   fi
 
-  # --- For Install or Update modes ---
-  info "Verifying required files in current directory ($(pwd))..."
+  debug "Verifying required files in current directory ($(pwd))..."
+  local file_to_check_main
   for file_to_check_main in "${SCRIPTS_TO_CHECK[@]}"; do
       [[ -f "$file_to_check_main" ]] || error_exit "Missing required script: $file_to_check_main" "$EXIT_CODE_CONFIG_ERROR"
   done
   [[ -f "$BASE_CONFIG" ]] || error_exit "Missing base config file: $BASE_CONFIG" "$EXIT_CODE_CONFIG_ERROR"
-  info "All required sub-scripts and base config file present."
+  debug "All required sub-scripts and base config file present."
 
-  info "Ensuring sub-scripts are executable..."
+  debug "Ensuring sub-scripts are executable..."
+  local script_to_make_exec_main
   for script_to_make_exec_main in "${SCRIPTS_TO_CHECK[@]}"; do
     run chmod +x "$script_to_make_exec_main" || error_exit "Failed to chmod $script_to_make_exec_main" "$EXIT_CODE_FILE_ERROR"
   done
@@ -366,22 +391,22 @@ main() {
   info "▶ Running base installer/updater (install_base_exportcliv2.sh)..."
   local base_install_cmd_array_main=(./install_base_exportcliv2.sh -c "$BASE_CONFIG")
   if [[ "$DRY_RUN" == true ]]; then base_install_cmd_array_main+=("-n"); fi
-  run "${base_install_cmd_array_main[@]}" || error_exit "Base installer/updater script failed." "$EXIT_CODE_FATAL_ERROR"
+  run "${base_install_cmd_array_main[@]}" || error_exit "Base installer/updater script 'install_base_exportcliv2.sh' failed. Review its output above for details." "$EXIT_CODE_FATAL_ERROR"
 
   if [[ "$OPERATION_MODE" == "install" ]]; then
     if (( ${#PARSED_INSTANCE_NAMES[@]} > 0 )); then
-      info "▶ Configuring instances: ${PARSED_INSTANCE_NAMES[*]}"
+      info "▶ Configuring instances:" "${PARSED_INSTANCE_NAMES[@]}"
       local configure_base_cmd_array_main=("./configure_instance.sh")
       if [[ "$DRY_RUN" == true ]]; then configure_base_cmd_array_main+=("-n"); fi
 
+      local inst_name_config_main
       for inst_name_config_main in "${PARSED_INSTANCE_NAMES[@]}"; do
         info " • Configuring instance: $inst_name_config_main"
-        # Corrected call to configure_instance.sh
         local current_configure_cmd_array_main=("${configure_base_cmd_array_main[@]}" -i "$inst_name_config_main")
         if [[ "$FORCE_INSTANCE_CONFIG" == true ]]; then current_configure_cmd_array_main+=("--force"); fi
 
         run "${current_configure_cmd_array_main[@]}" \
-          || error_exit "configure_instance.sh failed for instance: $inst_name_config_main" "$EXIT_CODE_FATAL_ERROR"
+          || error_exit "Configuration of instance '$inst_name_config_main' by 'configure_instance.sh' failed. Review this script's output above for detailed error messages from 'configure_instance.sh'. If existing configurations are the cause, the --force-reconfigure option for this orchestrator may be needed." "$EXIT_CODE_FATAL_ERROR"
       done
       info "Instance configuration finished."
     else
@@ -395,15 +420,20 @@ main() {
   if [[ "$OPERATION_MODE" == "install" ]]; then
     info "▶ Setting up services (enable, start, status)..."
     info " • Managing Bitmover service"
-    run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" --enable
-    run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" --start
-    run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" --status
+    run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" --enable \
+        || error_exit "Failed to enable Bitmover service. Review 'manage_services.sh' output above."
+    run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" --start \
+        || error_exit "Failed to start Bitmover service. Review 'manage_services.sh' output above."
+    run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" --status # Failure here is non-fatal for the orchestrator by default
 
     if (( ${#PARSED_INSTANCE_NAMES[@]} > 0 )); then
+      local inst_name_manage_main
       for inst_name_manage_main in "${PARSED_INSTANCE_NAMES[@]}"; do
         info " • Managing services for exportcliv2 instance '$inst_name_manage_main'"
-        run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" -i "$inst_name_manage_main" --enable
-        run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" -i "$inst_name_manage_main" --start
+        run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" -i "$inst_name_manage_main" --enable \
+            || error_exit "Failed to enable services for instance '$inst_name_manage_main'. Review 'manage_services.sh' output."
+        run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" -i "$inst_name_manage_main" --start \
+            || error_exit "Failed to start services for instance '$inst_name_manage_main'. Review 'manage_services.sh' output."
         run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" -i "$inst_name_manage_main" --status
       done
     fi
@@ -414,12 +444,15 @@ main() {
     if [[ "$RESTART_SERVICES_ON_UPDATE" == true ]]; then
       info "▶ Restarting services as requested by --restart-services..."
       info " • Restarting Bitmover service"
-      run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" --restart
+      run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" --restart \
+        || error_exit "Failed to restart Bitmover service. Review 'manage_services.sh' output above."
 
       if (( ${#PARSED_INSTANCE_NAMES[@]} > 0 )); then
-        info " • Restarting specified exportcliv2 instances: ${PARSED_INSTANCE_NAMES[*]}"
+        info " • Restarting specified exportcliv2 instances:" "${PARSED_INSTANCE_NAMES[@]}"
+        local inst_name_restart_main
         for inst_name_restart_main in "${PARSED_INSTANCE_NAMES[@]}"; do
-          run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" -i "$inst_name_restart_main" --restart
+          run ./manage_services.sh "${manage_service_base_opts_array_main[@]}" -i "$inst_name_restart_main" --restart \
+            || error_exit "Failed to restart instance '$inst_name_restart_main'. Review 'manage_services.sh' output."
         done
       else
           info "No specific instances provided via -i for restart after update. Only Bitmover was targeted for restart (if applicable)."
@@ -428,25 +461,19 @@ main() {
       info "Services not automatically restarted. Use --restart-services with --update, or restart manually using manage_services.sh."
     fi
   fi
+  SCRIPT_SUCCESSFUL=true
 }
 
-# --- Script Execution Starts Here ---
 main "$@"
-SCRIPT_SUCCESSFUL=true # If main completes (or returns early for status-only) without error_exit
 
-# --- Summary & Final Exit based on FAIL_COUNT ---
 if [[ "$DRY_RUN" == true ]]; then
-    if [[ "$OPERATION_MODE" != "status-only" ]]; then # Avoid redundant summary for status-only
+    if [[ "$OPERATION_MODE" != "status-only" ]]; then
          info "[DRY-RUN] Orchestration dry run scan completed. Review output for proposed actions."
     fi
 fi
 
 if (( FAIL_COUNT > 0 )); then
-  # SCRIPT_SUCCESSFUL is true because the orchestrator itself didn't fatally error.
-  # The _final_summary_message in the EXIT trap will use this combination.
   exit "$EXIT_CODE_PARTIAL_SUCCESS"
 fi
 
-# If SCRIPT_SUCCESSFUL is true and FAIL_COUNT is 0, the EXIT trap's _final_summary_message
-# will print "ORCHESTRATION COMPLETED SUCCESSFULLY" (unless help/version/status-only).
 exit "$EXIT_CODE_SUCCESS"

@@ -4,14 +4,12 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # -----------------------------------------------------------------------------
-# Instance Configurator for exportcliv2 (v3 - Corrected Arg Parsing)
+# Instance Configurator for exportcliv2 (v4 - Verbose Mode)
 # -----------------------------------------------------------------------------
 # - Creates <instance>.conf (environment variables for wrapper script).
 # - Creates <instance>_app.conf (config file for exportcliv2 binary -c arg).
 # - Uses defaults from base installer via /etc/default/${APP_NAME}_base_vars.
-# - Incorporates feedback on exit codes, helper functions, --force documentation,
-#   dry-run consistency, success messaging, and usage error handling.
-# - Corrected getopts handling for long options.
+# - Added verbose mode (-v, --verbose).
 # -----------------------------------------------------------------------------
 
 # --- Exit Codes ---
@@ -24,8 +22,17 @@ readonly EXIT_CODE_FILE_ERROR=5
 
 # --- Logging & Globals ---
 _ts()  { date -u +'%Y-%m-%dT%H:%M:%SZ'; }
-info() { echo "$(_ts) [INFO]  $*"; }
-warn() { echo "$(_ts) [WARN]  $*"; }
+info() { echo "$(_ts) [INFO]  $*"; } # Always shown
+warn() { echo "$(_ts) [WARN]  $*"; } # Always shown
+
+VERBOSE_MODE_CONFIGURE_INSTANCE=false # Global for verbose state
+
+debug() {
+  if [[ "$VERBOSE_MODE_CONFIGURE_INSTANCE" == true ]]; then
+    echo "$(_ts) [DEBUG] $*";
+  fi
+}
+
 error_exit() {
   local message="$1"
   local exit_code="${2:-$EXIT_CODE_GENERAL_ERROR}"
@@ -33,20 +40,18 @@ error_exit() {
   exit "$exit_code"
 }
 
-SCRIPT_SUCCESSFUL=false # Flag to indicate successful completion for EXIT trap
+SCRIPT_SUCCESSFUL=false
 
 # shellcheck disable=SC2317
 cleanup_on_error() {
-
   local exit_code="${1:-$?}"
   local line_num="${2:-UNKNOWN_LINE}"
   local failed_command="${3:-UNKNOWN_COMMAND}"
-
   if [[ "$exit_code" -ne "$EXIT_CODE_SUCCESS" && "$failed_command" != "error_exit"* ]]; then
     warn "Instance configuration FAILED on line ${line_num} with command: ${failed_command} (exit code: ${exit_code})."
     warn "System may be in an inconsistent state. Review logs and manually clean up if necessary."
   fi
-  SCRIPT_SUCCESSFUL=false # Ensure it's false on any error
+  SCRIPT_SUCCESSFUL=false
 }
 
 # shellcheck disable=SC2317
@@ -55,20 +60,17 @@ cleanup_on_exit() {
     if [[ "$SCRIPT_SUCCESSFUL" == true && "$exit_code" -eq "$EXIT_CODE_SUCCESS" ]]; then
         info "-------------------- INSTANCE CONFIGURATION COMPLETED SUCCESSFULLY --------------------"
     elif [[ "$exit_code" -ne "$EXIT_CODE_SUCCESS" && "$SCRIPT_SUCCESSFUL" == false ]]; then
-        # Error message would have been printed by error_exit or cleanup_on_error
-        # Avoid printing "FAILED" if usage was called for -h (which exits 0)
         if [[ "$exit_code" -ne "$EXIT_CODE_SUCCESS" || ($exit_code -eq "$EXIT_CODE_SUCCESS" && "$SCRIPT_SUCCESSFUL" == false) ]]; then
              info "-------------------- INSTANCE CONFIGURATION FAILED OR EXITED PREMATURELY --------------------"
         fi
     fi
-    # Add any other final cleanup here
 }
 
 trap 'cleanup_on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 trap 'cleanup_on_exit $?' EXIT
 
 
-readonly APP_NAME_FOR_BASE_VARS_LOOKUP="exportcliv2" # Used to find the _base_vars file
+readonly APP_NAME_FOR_BASE_VARS_LOOKUP="exportcliv2"
 readonly BASE_VARS_FILE="/etc/default/${APP_NAME_FOR_BASE_VARS_LOOKUP}_base_vars"
 
 # --- Argument Parsing ---
@@ -80,7 +82,7 @@ DRY_RUN=""
 usage() {
   local determined_etc_dir_desc="the application's etc directory (typically /etc/${APP_NAME_FOR_BASE_VARS_LOOKUP})"
   cat <<EOF
-Usage: $(basename "$0") -i INSTANCE_NAME [--config-source-env-file PATH] [--force] [-n] [-h]
+Usage: $(basename "$0") -i INSTANCE_NAME [--config-source-env-file PATH] [--force] [-v|--verbose] [-n] [-h]
 
 Configures a new instance for the '${APP_NAME_FOR_BASE_VARS_LOOKUP}' application.
 This script MUST be run as root or with sudo.
@@ -98,22 +100,22 @@ Options:
                             will still be generated with defaults.
   --force                   Optional: Overwrite existing instance configuration file(s)
                             (both <INSTANCE_NAME>.conf and <INSTANCE_NAME>_app.conf if they exist).
+  -v, --verbose             Optional: Enable verbose output.
   -n                        Dry-run mode (print commands, no execution).
   -h                        Show this help message and exit.
 EOF
-  exit "${1:-$EXIT_CODE_USAGE_ERROR}" # Default to usage error if no specific code given
+  exit "${1:-$EXIT_CODE_USAGE_ERROR}"
 }
 
-while getopts ":nhi:" o; do
+while getopts ":nvi:" o; do # Added 'v'
   case $o in
     i) INSTANCE="$OPTARG" ;;
     n) DRY_RUN="echo" ;;
-    h) usage "$EXIT_CODE_SUCCESS" ;; # Explicit success exit for -h
+    v) VERBOSE_MODE_CONFIGURE_INSTANCE=true ;; # Set verbose mode
+    h) usage "$EXIT_CODE_SUCCESS" ;;
     \?)
-        # Check if the problematic argument (at current OPTIND) is a long option
         if [[ "${!OPTIND:-}" == --* ]]; then
-            break # It's a long option, stop getopts processing here.
-                  # OPTIND is not advanced by getopts for invalid options in silent mode.
+            break
         else
             error_exit "Invalid short option: -$OPTARG. Use -h for help." "$EXIT_CODE_USAGE_ERROR"
         fi
@@ -121,13 +123,12 @@ while getopts ":nhi:" o; do
     :) error_exit "Short option -$OPTARG requires an argument. Use -h for help." "$EXIT_CODE_USAGE_ERROR" ;;
   esac
 done
-shift $((OPTIND -1)) # Remove processed short options and their arguments
+shift $((OPTIND -1))
 
-# Manual parsing for long options from remaining arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --config-source-env-file)
-            if [[ -z "${2:-}" || "${2}" == -* ]]; then # Also check if next arg looks like an option
+            if [[ -z "${2:-}" || "${2}" == -* ]]; then
                 error_exit "Option --config-source-env-file requires an argument." "$EXIT_CODE_USAGE_ERROR";
             fi
             CONFIG_SRC_ENV_FILE="$2"
@@ -135,6 +136,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --force)
             FORCE_OVERWRITE="true"
+            shift
+            ;;
+        --verbose) # Added long option for verbose
+            VERBOSE_MODE_CONFIGURE_INSTANCE=true
             shift
             ;;
         *)
@@ -149,42 +154,40 @@ if [[ "$(id -u)" -ne 0 ]]; then
   error_exit "This script must be run as root or with sudo." "$EXIT_CODE_PREREQUISITE_ERROR"
 fi
 
-# --- Validate Mandatory Instance Name (must be set after all parsing) ---
 if [[ -z "$INSTANCE" ]]; then
   error_exit "Instance name (-i) is required. Use -h for help." "$EXIT_CODE_USAGE_ERROR"
 fi
 
-# Validate instance name format
 if ! [[ "$INSTANCE" =~ ^[A-Za-z0-9._-]+$ ]]; then
   error_exit "Invalid instance name: \"${INSTANCE}\". Only A-Z, a-z, 0-9, dot (.), underscore (_), and dash (-) are allowed." "$EXIT_CODE_USAGE_ERROR"
 fi
-info "Validated instance name: \"${INSTANCE}\""
+debug "Validated instance name: \"${INSTANCE}\"" # Changed to debug
 
 # --- Pre-flight check for required commands ---
 required_commands=(getent install date id basename chmod chown printf mkdir)
-info "Checking for required commands..."
+debug "Checking for required commands..." # Changed to debug
 for cmd in "${required_commands[@]}"; do
   command -v "$cmd" &>/dev/null || error_exit "Required command \"${cmd}\" is not installed or not in PATH." "$EXIT_CODE_PREREQUISITE_ERROR"
 done
-info "All required commands are available."
+debug "All required commands are available." # Changed to debug
 
-# --- Load Base Vars (sourced from file created by main installer) ---
-info "Attempting to load base variables from \"${BASE_VARS_FILE}\"..."
+# --- Load Base Vars ---
+debug "Attempting to load base variables from \"${BASE_VARS_FILE}\"..." # Changed to debug
 if [[ ! -f "$BASE_VARS_FILE" ]]; then
   error_exit "Base variables file \"${BASE_VARS_FILE}\" not found. Ensure the base installer was run successfully." "$EXIT_CODE_CONFIG_ERROR"
 fi
-source "$BASE_VARS_FILE" # SC1090
-info "Successfully sourced base variables from \"${BASE_VARS_FILE}\"."
+source "$BASE_VARS_FILE"
+debug "Successfully sourced base variables from \"${BASE_VARS_FILE}\"." # Changed to debug
 
 : "${APP_NAME:?APP_NAME not set in ${BASE_VARS_FILE}. Base install may be incomplete.}" "$EXIT_CODE_CONFIG_ERROR"
 : "${ETC_DIR:?ETC_DIR not set in ${BASE_VARS_FILE}. Base install may be incomplete.}" "$EXIT_CODE_CONFIG_ERROR"
 : "${APP_GROUP:?APP_GROUP not set in ${BASE_VARS_FILE}. Base install may be incomplete.}" "$EXIT_CODE_CONFIG_ERROR"
 : "${DEFAULT_CONFIGURE_INSTANCE_EXPORT_TIMEOUT:?DEFAULT_CONFIGURE_INSTANCE_EXPORT_TIMEOUT not set in ${BASE_VARS_FILE}. Base install may be incomplete or install-app.conf is missing EXPORT_TIMEOUT_CONFIG.}" "$EXIT_CODE_CONFIG_ERROR"
 
-info "Using APP_NAME from base vars: \"${APP_NAME}\" (for service names, etc.)"
-info "Using ETC_DIR from base vars: \"${ETC_DIR}\""
-info "Using APP_GROUP from base vars: \"${APP_GROUP}\" (for config file group ownership)"
-info "Using default instance EXPORT_TIMEOUT from base vars: \"${DEFAULT_CONFIGURE_INSTANCE_EXPORT_TIMEOUT}\" seconds"
+debug "Using APP_NAME from base vars: \"${APP_NAME}\" (for service names, etc.)" # Changed to debug
+debug "Using ETC_DIR from base vars: \"${ETC_DIR}\"" # Changed to debug
+debug "Using APP_GROUP from base vars: \"${APP_GROUP}\" (for config file group ownership)" # Changed to debug
+debug "Using default instance EXPORT_TIMEOUT from base vars: \"${DEFAULT_CONFIGURE_INSTANCE_EXPORT_TIMEOUT}\" seconds" # Changed to debug
 
 # --- Define Target Paths ---
 readonly TARGET_CONF_DIR="$ETC_DIR"
@@ -192,11 +195,11 @@ readonly TARGET_ENV_CONF_FILE="${TARGET_CONF_DIR}/${INSTANCE}.conf"
 readonly APP_SPECIFIC_CONFIG_FILENAME="${INSTANCE}_app.conf"
 readonly TARGET_APP_SPECIFIC_CONFIG_FILE="${TARGET_CONF_DIR}/${APP_SPECIFIC_CONFIG_FILENAME}"
 
-# --- Define Defaults for Generated Configs (if not using a source file) ---
+# --- Define Defaults for Generated Configs ---
 readonly DEFAULT_EXPORT_IP="10.0.0.1"
 readonly DEFAULT_EXPORT_PORTID="1"
 readonly DEFAULT_EXPORT_STARTTIME_OFFSET_SPEC="3 minutes ago"
-readonly DEFAULT_EXPORT_ENDTIME_VALUE="-1" # Fixed value for this app version
+readonly DEFAULT_EXPORT_ENDTIME_VALUE="-1"
 readonly DEFAULT_APP_CONFIG_CONTENT="mining_delta_sec=120"
 
 
@@ -211,49 +214,55 @@ _manage_file_permissions() {
 
 ensure_config_directory() {
     local dir_path="$1"
-    info "Ensuring target configuration directory (previewed in dry-run): \"${dir_path}\""
+    debug "Ensuring target configuration directory: \"${dir_path}\"" # Changed to debug
+    # The actual command execution will be visible in dry-run because of $DRY_RUN prefix
     $DRY_RUN install -d -o root -g "${APP_GROUP}" -m0755 "${dir_path}" \
         || error_exit "Failed to create or set permissions for directory \"${dir_path}\"." "$EXIT_CODE_FILE_ERROR"
 }
 
 copy_source_env_file() {
     local src_file="$1"; local dest_file="$2"; local owner="$3"; local group="$4"; local perms="$5"
-    info "Copying \"${src_file}\" to \"${dest_file}\"..."
+    debug "Copying \"${src_file}\" to \"${dest_file}\"..." # Changed to debug
     if [[ ! -f "$src_file" ]]; then
         error_exit "Specified environment configuration source file \"${src_file}\" not found." "$EXIT_CODE_CONFIG_ERROR"
     fi
     $DRY_RUN install -T "$src_file" "$dest_file" \
         || error_exit "Failed to copy \"${src_file}\" to \"${dest_file}\"." "$EXIT_CODE_FILE_ERROR"
     _manage_file_permissions "$dest_file" "$owner" "$group" "$perms"
-    info "Environment configuration file processed from source: \"${dest_file}\"."
+    debug "Environment configuration file processed from source: \"${dest_file}\"." # Changed to debug
 }
 
 write_generated_file_content() {
     local content="$1"; local output_path="$2"; local owner="$3"; local group="$4"; local perms="$5"; local file_description="$6"
 
-    info "Writing generated ${file_description} to \"${output_path}\"..."
+    debug "Writing generated ${file_description} to \"${output_path}\"..." # Changed to debug
     if [[ -n "$DRY_RUN" ]]; then
+        # This info is specific to dry-run and should remain
         info "[DRY_RUN] Would write the following content to \"${output_path}\":"
         cat <<DRYRUNEOF
 --- BEGIN GENERATED ${file_description^^} (${output_path}) ---
 $content
 --- END GENERATED ${file_description^^} ---
 DRYRUNEOF
-        echo "$DRY_RUN chown \"$owner:$group\" \"$output_path\"" # DRY_RUN is 'echo'
+        echo "$DRY_RUN chown \"$owner:$group\" \"$output_path\""
         echo "$DRY_RUN chmod \"$perms\" \"$output_path\""
     else
         printf "%s\n" "$content" > "$output_path" \
             || error_exit "Failed to write ${file_description} to \"${output_path}\"." "$EXIT_CODE_FILE_ERROR"
         _manage_file_permissions "$output_path" "$owner" "$group" "$perms"
-        info "Successfully generated and saved ${file_description} to \"${output_path}\"."
+        debug "Successfully generated and saved ${file_description} to \"${output_path}\"." # Changed to debug
     fi
 }
 
 # --- Main Logic ---
 
-[[ -n "$DRY_RUN" ]] && warn "DRY RUN MODE ENABLED: No changes will be made to the system."
+if [[ -n "$DRY_RUN" ]]; then
+    warn "DRY RUN MODE ENABLED: No changes will be made to the system."
+elif [[ "$VERBOSE_MODE_CONFIGURE_INSTANCE" == true ]]; then
+    info "Verbose mode enabled for instance configurator."
+fi
 
-# Guard against accidental overwrites
+
 target_files_exist=false
 existing_files_msg=""
 if [[ -e "$TARGET_ENV_CONF_FILE" ]]; then
@@ -262,10 +271,8 @@ if [[ -e "$TARGET_ENV_CONF_FILE" ]]; then
 fi
 if [[ -e "$TARGET_APP_SPECIFIC_CONFIG_FILE" ]]; then
     target_files_exist=true
-    existing_files_msg+="'${TARGET_APP_SPECIFIC_CONFIG_FILE}'" # No trailing space needed if it's the last one
+    existing_files_msg+="'${TARGET_APP_SPECIFIC_CONFIG_FILE}'"
 fi
-
-# Trim trailing space from existing_files_msg if any
 existing_files_msg="${existing_files_msg%" "}"
 
 
@@ -273,63 +280,43 @@ if [[ "$target_files_exist" == true && -z "$FORCE_OVERWRITE" ]]; then
   if [[ -z "$DRY_RUN" ]]; then
     error_exit "One or more target configuration files exist: (${existing_files_msg}). Use --force to overwrite both." "$EXIT_CODE_FILE_ERROR"
   else
+    # This info is specific to dry-run and should remain
     info "[DRY_RUN] One or more target configuration files exist: (${existing_files_msg}). If not in dry-run, --force would be required to overwrite."
   fi
 elif [[ "$target_files_exist" == true && -n "$FORCE_OVERWRITE" ]]; then
    if [[ -z "$DRY_RUN" ]]; then
     warn "One or more target configuration files exist: (${existing_files_msg}). --force specified, proceeding with overwrite."
    else
+    # This info is specific to dry-run and should remain
     info "[DRY_RUN] One or more target configuration files exist: (${existing_files_msg}). --force specified, would proceed with overwrite."
    fi
 fi
 
-ensure_config_directory "$TARGET_CONF_DIR"
+ensure_config_directory "$TARGET_CONF_DIR" # Uses debug internally
 
-# Deploy or Generate Instance Environment Configuration File (e.g., ZZZ.conf)
 if [[ -n "$CONFIG_SRC_ENV_FILE" ]]; then
-  copy_source_env_file "$CONFIG_SRC_ENV_FILE" "$TARGET_ENV_CONF_FILE" "root" "$APP_GROUP" "0640"
+  copy_source_env_file "$CONFIG_SRC_ENV_FILE" "$TARGET_ENV_CONF_FILE" "root" "$APP_GROUP" "0640" # Uses debug internally
 else
   script_basename=$(basename "$0")
   generated_env_content=$(cat <<EOF
 # ${APP_NAME} instance "${INSTANCE}" environment configuration for wrapper script
 # Generated by ${script_basename} on $(_ts)
-
-# Timeout for the exportcliv2 binary, sourced from EXPORT_TIMEOUT_CONFIG in install-app.conf
-# via the ${BASE_VARS_FILE} file.
 EXPORT_TIMEOUT="${DEFAULT_CONFIGURE_INSTANCE_EXPORT_TIMEOUT}"
-
-# Source identifier, typically the instance name. Used by the wrapper script
-# to construct part of the -o path for the exportcliv2 binary.
 EXPORT_SOURCE="${INSTANCE}"
-
-# --- Time Configuration ---
-# EXPORT_STARTTIME_OFFSET_SPEC is used by the wrapper script to calculate the dynamic start time.
-# Examples: "3 minutes ago", "1 hour ago", "2 days ago 00:00"
 EXPORT_STARTTIME_OFFSET_SPEC="${DEFAULT_EXPORT_STARTTIME_OFFSET_SPEC}"
-
-# EXPORT_ENDTIME is passed by the wrapper directly to the ${APP_NAME} binary.
-# For this version, it is typically fixed to ${DEFAULT_EXPORT_ENDTIME_VALUE}
 EXPORT_ENDTIME="${DEFAULT_EXPORT_ENDTIME_VALUE}"
-
-# --- Network and Other Parameters ---
-# These are passed by the wrapper directly to the ${APP_NAME} binary.
 EXPORT_IP="${DEFAULT_EXPORT_IP}"
 EXPORT_PORTID="${DEFAULT_EXPORT_PORTID}"
-
-# --- Path to Per-Instance Application Specific Config File ---
-# This file is referenced by the -c argument passed by the wrapper to the ${APP_NAME} binary.
-# It is also generated by ${script_basename} in ${TARGET_CONF_DIR}/
 EXPORT_APP_CONFIG_FILE_PATH="${TARGET_APP_SPECIFIC_CONFIG_FILE}"
 EOF
 )
-  write_generated_file_content "$generated_env_content" "$TARGET_ENV_CONF_FILE" "root" "$APP_GROUP" "0640" "environment configuration"
+  write_generated_file_content "$generated_env_content" "$TARGET_ENV_CONF_FILE" "root" "$APP_GROUP" "0640" "environment configuration" # Uses debug internally
 fi
 
-# Always Generate/Update Application-Specific Config File (e.g., ZZZ_app.conf)
-write_generated_file_content "$DEFAULT_APP_CONFIG_CONTENT" "$TARGET_APP_SPECIFIC_CONFIG_FILE" "root" "$APP_GROUP" "0640" "application-specific configuration"
+write_generated_file_content "$DEFAULT_APP_CONFIG_CONTENT" "$TARGET_APP_SPECIFIC_CONFIG_FILE" "root" "$APP_GROUP" "0640" "application-specific configuration" # Uses debug internally
 
 
-# --- Next Steps Information ---
+# --- Next Steps Information --- Keep these as info
 info "Instance configuration for \"${INSTANCE}\" processing complete."
 info "  Environment config (for wrapper): \"${TARGET_ENV_CONF_FILE}\""
 info "  Application config (for -c arg):  \"${TARGET_APP_SPECIFIC_CONFIG_FILE}\""
@@ -343,6 +330,7 @@ info "    - Review ${TARGET_APP_SPECIFIC_CONFIG_FILE} if '${DEFAULT_APP_CONFIG_C
 readonly main_service_name="${APP_NAME}@${INSTANCE}.service"
 readonly path_service_name="${APP_NAME}-restart@${INSTANCE}.path"
 
+# This heredoc is important user output, should always be displayed
 cat <<EOF
 
 -----------------------------------------------------------------------------
