@@ -3,7 +3,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # --- Version ---
-VERSION="1.2.6"
+VERSION="1.2.7" # Added verbose mode
 
 # --- Exit Codes ---
 readonly EXIT_CODE_SUCCESS=0
@@ -17,18 +17,25 @@ readonly EXIT_CODE_ACTION_FAILED=6
 _ts() { date -u +'%Y-%m-%dT%H:%M:%SZ'; }
 info() { echo >&2 "$(_ts) [INFO]  $*"; }
 warn() { echo >&2 "$(_ts) [WARN]  $*"; }
+
+VERBOSE_MODE_MANAGE_SERVICES=false # Global for verbose state
+
+debug() {
+  if [[ "$VERBOSE_MODE_MANAGE_SERVICES" == true ]]; then
+    echo >&2 "$(_ts) [DEBUG] $*";
+  fi
+}
+
 error_exit() {
   local message="$1"
   local exit_code="${2:-$EXIT_CODE_GENERAL_ERROR}"
-  # SCRIPT_SUCCESSFUL is false by default or set false by ERR trap before error_exit might be called
-  # No need to set SCRIPT_SUCCESSFUL=false here as exit is immediate.
   echo >&2 "$(_ts) [ERROR] $message"
   exit "$exit_code"
 }
 
 SCRIPT_SUCCESSFUL=false
 HELP_OR_VERSION_EXIT=false
-INFORMATIONAL_ACTION_PERFORMED=false # New flag
+INFORMATIONAL_ACTION_PERFORMED=false
 
 # --- Cleanup Traps ---
 # shellcheck disable=SC2317
@@ -36,38 +43,28 @@ cleanup_on_error() {
   local exit_code="${1:-$?}"
   local line_num="${2:-UNKNOWN_LINE}"
   local failed_command="${3:-UNKNOWN_COMMAND}"
-  # This trap is for 'set -e' exits or unhandled errors.
-  # error_exit calls 'exit' directly, so its message is the primary one.
   if [[ $exit_code -ne $EXIT_CODE_SUCCESS && $failed_command != error_exit* ]]; then
     warn "Script FAILED on line ${line_num} with command: ${failed_command} (exit code: ${exit_code})."
   fi
-  SCRIPT_SUCCESSFUL=false # Ensure this is false if ERR trap is hit
+  SCRIPT_SUCCESSFUL=false
 }
 
 # shellcheck disable=SC2317
 cleanup_on_exit() {
-  local exit_code="${1:-$?}" # Actual exit code of the script
+  local exit_code="${1:-$?}"
   if [[ "$HELP_OR_VERSION_EXIT" == true ]]; then
-    : # No summary message for --help or --version exits
+    :
   elif [[ "$INFORMATIONAL_ACTION_PERFORMED" == true && "$SCRIPT_SUCCESSFUL" == true && $exit_code -eq $EXIT_CODE_SUCCESS ]]; then
-    : # No summary message for successful informational actions (status, logs)
+    :
   elif [[ "$SCRIPT_SUCCESSFUL" == true && $exit_code -eq $EXIT_CODE_SUCCESS ]]; then
     info "-------------------- OPERATION COMPLETED SUCCESSFULLY --------------------"
-  elif [[ $exit_code -ne $EXIT_CODE_SUCCESS ]]; then # Any non-zero exit code means failure
-    # SCRIPT_SUCCESSFUL should be false if we got here with a non-zero exit.
-    # The specific error message should have already been printed.
+  elif [[ $exit_code -ne $EXIT_CODE_SUCCESS ]]; then
     info "-------------------- OPERATION FAILED (EXIT CODE: $exit_code) --------------------"
-  # else
-    # This case (exit_code == 0 BUT SCRIPT_SUCCESSFUL == false) implies an issue
-    # in script logic, e.g., an error was caught but script still exited 0.
-    # Or HELP_OR_VERSION_EXIT was false and INFORMATIONAL_ACTION_PERFORMED was false,
-    # and SCRIPT_SUCCESSFUL was false, but we exited 0. This shouldn't happen.
-    # warn "Script exited with code 0 but was not marked as fully successful. Review logic."
   fi
 }
 
 trap 'cleanup_on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
-trap 'cleanup_on_exit $?' EXIT # Catches all exits, including those from error_exit
+trap 'cleanup_on_exit $?' EXIT
 trap 'error_exit "Script interrupted by signal." "$EXIT_CODE_GENERAL_ERROR"' INT TERM
 
 
@@ -79,42 +76,35 @@ enforce_root() {
 }
 
 run() {
-  local cmd_for_display # Variable to hold the command string for display
-
-  # Construct a string representation of the command for logging.
-  # "$*" normally joins arguments with the first character of IFS.
-  # To display them on one line separated by spaces for the log,
-  # we temporarily change IFS just for this string construction.
-  if ((${#@})); then # Check if there are any arguments to the run function
+  local cmd_for_display
+  if ((${#@})); then
       local OLD_IFS="$IFS"
-      IFS=' ' # Set IFS to a single space for joining arguments
-      cmd_for_display="$*" # Now $* expands with arguments separated by spaces
-      IFS="$OLD_IFS" # Restore original IFS
+      IFS=' '
+      cmd_for_display="$*"
+      IFS="$OLD_IFS"
   else
-      cmd_for_display="" # Handle cases where run might be called with no args (though unlikely here)
+      cmd_for_display=""
   fi
 
   if [[ "${DRY_RUN:-false}" == true ]]; then
-    # Use the space-joined string for dry-run output as well
+    # Use printf for consistency, sending to stderr for logs
     printf "%s [DRY-RUN] Would execute: %s\n" "$(_ts)" "$cmd_for_display" >&2
-    return 0 # Assume success for dry run to allow script to continue
+    return 0
   fi
 
-  # Use the space-joined string for info log
-  info "Executing: $cmd_for_display"
+  debug "Executing: $cmd_for_display" # Changed to debug
 
-  set +e # Temporarily disable exit on error to capture exit code
-  "$@"   # Execute the actual command with original argument separation preserved
-  local ec=$? # Capture exit code of the command
-  set -e # Re-enable exit on error
+  set +e
+  "$@"
+  local ec=$?
+  set -e
 
   if [[ $ec -ne 0 ]]; then
-    # Check if the command was 'systemctl status ...'
     if [[ "$1" == "systemctl" && "$2" == "status" ]]; then
-      local unit_name="$3" # In this script, the unit name is reliably the 3rd argument
-
+      local unit_name="$3"
       case "$ec" in
         3)
+          # This is useful info, keep as info or make a specific "status_info"
           info "Service '$unit_name' is inactive/dead (systemctl exit code: $ec). This is often a normal state."
           ;;
         4)
@@ -125,8 +115,6 @@ run() {
           ;;
       esac
     else
-      # Generic warning for all other commands that exit non-zero
-      # Also use the nicely formatted cmd_for_display here
       warn "Command exited with code $ec: $cmd_for_display"
     fi
   fi
@@ -147,10 +135,9 @@ SINCE_ARG=""
 
 # --- Usage ---
 usage() {
-  local code="${1:-$EXIT_CODE_USAGE_ERROR}" # Default to usage error
-  # If called for -h, code will be EXIT_CODE_SUCCESS
+  local code="${1:-$EXIT_CODE_USAGE_ERROR}"
   if [[ "$code" -eq "$EXIT_CODE_SUCCESS" ]]; then
-    HELP_OR_VERSION_EXIT=true # Signal that this is a clean help/version exit
+    HELP_OR_VERSION_EXIT=true
   fi
   cat <<EOF
 Usage: $(basename "$0") [OPTIONS] ACTION_FLAG
@@ -161,6 +148,7 @@ Options:
   -i, --instance NAME   Switch to instance mode for NAME.
   --since <time>        Show logs since <time> (e.g., "1 hour ago", "YYYY-MM-DD HH:MM:SS").
   -n, --dry-run         Print commands without executing.
+  -v, --verbose         Enable verbose output.
   --version             Show version and exit.
   -h, --help            Show this help and exit.
 
@@ -184,15 +172,14 @@ EOF
 }
 
 # --- Early help/version scan ---
-for arg_scan in "$@"; do # Iterate through all arguments
+for arg_scan in "$@"; do
   case "$arg_scan" in
     --version)
       echo "$(basename "$0") v$VERSION"
-      HELP_OR_VERSION_EXIT=true # Signal for exit trap
+      HELP_OR_VERSION_EXIT=true
       exit $EXIT_CODE_SUCCESS
       ;;
     -h|--help)
-      # HELP_OR_VERSION_EXIT will be set inside usage()
       usage $EXIT_CODE_SUCCESS
       ;;
   esac
@@ -210,6 +197,8 @@ while [[ $# -gt 0 ]]; do
       SINCE_ARG="$2"; shift 2;;
     -n|--dry-run)
       DRY_RUN=true; shift;;
+    -v|--verbose) # Added -v and --verbose
+      VERBOSE_MODE_MANAGE_SERVICES=true; shift;;
     --start|--stop|--restart|--logs|--logs-follow|--enable|--disable|--reset-failed)
       if [[ -n "$ACTION_FLAG" ]]; then error_exit "Multiple actions ('$ACTION_FLAG' and '${1#--}') not allowed." $EXIT_CODE_USAGE_ERROR; fi
       ACTION_FLAG="${1#--}"; shift;;
@@ -217,7 +206,7 @@ while [[ $# -gt 0 ]]; do
       if [[ -n "$ACTION_FLAG" ]]; then error_exit "Multiple actions ('$ACTION_FLAG' and 'status') not allowed." $EXIT_CODE_USAGE_ERROR; fi
       ACTION_FLAG="status"; shift;;
     *)
-      TEMP_ARGS+=("$1"); shift;; # Collect unrecognized arguments
+      TEMP_ARGS+=("$1"); shift;;
   esac
 done
 
@@ -241,12 +230,10 @@ fi
 if [[ ! -f "$BASE_VARS_FILE" ]]; then
   error_exit "Base vars file not found: $BASE_VARS_FILE." $EXIT_CODE_CONFIG_ERROR
 fi
-info "Sourcing $BASE_VARS_FILE..."
+debug "Sourcing $BASE_VARS_FILE..." # Changed to debug
 # shellcheck source=/dev/null
 source "$BASE_VARS_FILE"
 : "${APP_NAME:?APP_NAME missing in $BASE_VARS_FILE.}" $EXIT_CODE_CONFIG_ERROR
-# Other vars like BASE_DIR are not strictly required by this service manager script,
-# but they don't hurt to be present in the environment.
 
 # --- Determine service names ---
 MAIN_SERVICE=""
@@ -262,11 +249,11 @@ if [[ "$MODE" == "instance" ]]; then
   PATH_SERVICE="${APP_NAME}-restart@${INSTANCE_NAME}.path"
   RESTART_SERVICE="${APP_NAME}-restart@${INSTANCE_NAME}.service"
   TARGET_DESC="${APP_NAME} instance '$INSTANCE_NAME'"
-  info "Mode: Instance '$INSTANCE_NAME'"
+  debug "Mode: Instance '$INSTANCE_NAME'" # Changed to debug
 else
   MAIN_SERVICE="$BITMOVER_SERVICE_NAME"
   TARGET_DESC="Bitmover service ($MAIN_SERVICE)"
-  info "Mode: Bitmover"
+  debug "Mode: Bitmover" # Changed to debug
 fi
 
 # --- Prepare journalctl options ---
@@ -275,14 +262,18 @@ if [[ -n "$SINCE_ARG" ]]; then
   journalctl_since_opts=(--since "$SINCE_ARG")
 fi
 
+# This is an important high-level message, keep as info
 info "Performing '$ACTION_FLAG' on $TARGET_DESC (Dry-run: $DRY_RUN)"
+if [[ "$DRY_RUN" != true && "$VERBOSE_MODE_MANAGE_SERVICES" == true ]]; then
+    info "Verbose mode enabled for service manager." # Info if verbose and not dry run
+fi
 
 # --- Dispatch Actions ---
 case "$ACTION_FLAG" in
   start)
     run systemctl start "$MAIN_SERVICE" || error_exit "Failed to start $MAIN_SERVICE" $EXIT_CODE_ACTION_FAILED
     if [[ -n "$PATH_SERVICE" ]]; then
-      run systemctl start "$PATH_SERVICE" # Path units usually start if their .service is started/enabled
+      run systemctl start "$PATH_SERVICE"
     fi
     ;;
   stop)
@@ -294,33 +285,33 @@ case "$ACTION_FLAG" in
   restart)
     run systemctl restart "$MAIN_SERVICE" || error_exit "Failed to restart $MAIN_SERVICE" $EXIT_CODE_ACTION_FAILED
     if [[ -n "$PATH_SERVICE" ]]; then
-      info "Note: Associated path unit ($PATH_SERVICE) is event-driven and not directly restarted."
+      info "Note: Associated path unit ($PATH_SERVICE) is event-driven and not directly restarted." # Keep as info
     fi
     ;;
   status)
-    INFORMATIONAL_ACTION_PERFORMED=true # Signal for exit trap
-    echo "--- Status for $MAIN_SERVICE ---"
-    run systemctl status "$MAIN_SERVICE" --no-pager || true # Allow non-zero exit (e.g. service failed)
+    INFORMATIONAL_ACTION_PERFORMED=true
+    echo "--- Status for $MAIN_SERVICE ---" # Direct output
+    run systemctl status "$MAIN_SERVICE" --no-pager || true
     if [[ -n "$PATH_SERVICE" ]]; then
-      echo; echo "--- Status for $PATH_SERVICE ---"
+      echo; echo "--- Status for $PATH_SERVICE ---" # Direct output
       run systemctl status "$PATH_SERVICE" --no-pager || true
     fi
     if [[ -n "$RESTART_SERVICE" ]]; then
-      echo; echo "--- Status for related service $RESTART_SERVICE ---"
+      echo; echo "--- Status for related service $RESTART_SERVICE ---" # Direct output
       run systemctl status "$RESTART_SERVICE" --no-pager || true
     fi
     ;;
   logs)
-    INFORMATIONAL_ACTION_PERFORMED=true # Signal for exit trap
-    info "Displaying logs for $MAIN_SERVICE ${SINCE_ARG:+(since $SINCE_ARG)}"
+    INFORMATIONAL_ACTION_PERFORMED=true
+    info "Displaying logs for $MAIN_SERVICE ${SINCE_ARG:+(since $SINCE_ARG)}" # Keep as info
     cmd_logs=(journalctl -u "$MAIN_SERVICE" --no-pager)
     cmd_logs+=("${journalctl_since_opts[@]}")
     [[ ${#journalctl_since_opts[@]} -eq 0 ]] && cmd_logs+=("-n" "50")
-    run "${cmd_logs[@]}" || true # Allow non-zero exit (e.g. no logs found)
+    run "${cmd_logs[@]}" || true
 
     if [[ -n "$RESTART_SERVICE" ]]; then
-      echo >&2
-      info "Displaying logs for related $RESTART_SERVICE ${SINCE_ARG:+(since $SINCE_ARG)}"
+      echo >&2 # Spacing for clarity
+      info "Displaying logs for related $RESTART_SERVICE ${SINCE_ARG:+(since $SINCE_ARG)}" # Keep as info
       cmd_logs_restart=(journalctl -u "$RESTART_SERVICE" --no-pager)
       cmd_logs_restart+=("${journalctl_since_opts[@]}")
       [[ ${#journalctl_since_opts[@]} -eq 0 ]] && cmd_logs_restart+=("-n" "20")
@@ -328,29 +319,23 @@ case "$ACTION_FLAG" in
     fi
     ;;
   logs-follow)
-    INFORMATIONAL_ACTION_PERFORMED=true # Signal for exit trap
+    INFORMATIONAL_ACTION_PERFORMED=true
     units_to_follow=( -u "$MAIN_SERVICE" )
     [[ -n "$PATH_SERVICE" ]]     && units_to_follow+=( -u "$PATH_SERVICE" )
     [[ -n "$RESTART_SERVICE" ]]  && units_to_follow+=( -u "$RESTART_SERVICE" )
 
-    info "Following logs for services: ${units_to_follow[*]} ${SINCE_ARG:+(since $SINCE_ARG)}"
-    cmd_follow=(journalctl -f "${units_to_follow[@]}") # Use array quoting
+    info "Following logs for services: ${units_to_follow[*]} ${SINCE_ARG:+(since $SINCE_ARG)}" # Keep as info
+    cmd_follow=(journalctl -f "${units_to_follow[@]}")
     cmd_follow+=("${journalctl_since_opts[@]}")
 
     if [[ "$DRY_RUN" == true ]]; then
       printf "%s [DRY-RUN] Would execute: %s\n" "$(_ts)" "${cmd_follow[*]}" >&2
     else
-      # Run directly. Ctrl-C should exit journalctl, not necessarily error script.
       "${cmd_follow[@]}" || {
-        # This block executes if journalctl -f exits non-zero
         jc_exit_code=$?
-        # SIGINT (Ctrl-C) typically results in exit code 130
-        if [[ $jc_exit_code -eq 130 ]]; then
-          info "Journal follow interrupted by user (Ctrl-C)."
-          # This is a clean interruption, so don't call error_exit.
-          # SCRIPT_SUCCESSFUL will be set to true at the end of script.
+        if [[ $jc_exit_code -eq 130 ]]; then # SIGINT
+          info "Journal follow interrupted by user (Ctrl-C)." # Keep as info
         else
-          # Other non-zero exit from journalctl -f is an actual error.
           error_exit "journalctl -f command failed or was interrupted unexpectedly (exit code: $jc_exit_code)." $EXIT_CODE_ACTION_FAILED
         fi
       }
@@ -361,30 +346,27 @@ case "$ACTION_FLAG" in
     if [[ -n "$PATH_SERVICE" ]]; then
       run systemctl enable "$PATH_SERVICE" || error_exit "Failed to enable $PATH_SERVICE" $EXIT_CODE_ACTION_FAILED
     fi
-    info "$TARGET_DESC service(s) enabled."
+    info "$TARGET_DESC service(s) enabled." # Keep as info
     ;;
   disable)
     run systemctl disable "$MAIN_SERVICE" || error_exit "Failed to disable $MAIN_SERVICE" $EXIT_CODE_ACTION_FAILED
     if [[ -n "$PATH_SERVICE" ]]; then
       run systemctl disable "$PATH_SERVICE" || error_exit "Failed to disable $PATH_SERVICE" $EXIT_CODE_ACTION_FAILED
     fi
-    info "$TARGET_DESC service(s) disabled."
+    info "$TARGET_DESC service(s) disabled." # Keep as info
     ;;
   reset-failed)
-    info "Resetting failed state for $MAIN_SERVICE..."
+    info "Resetting failed state for $MAIN_SERVICE..." # Keep as info
     run systemctl reset-failed "$MAIN_SERVICE" || error_exit "Failed to reset-failed state for $MAIN_SERVICE" $EXIT_CODE_ACTION_FAILED
     if [[ -n "$PATH_SERVICE" ]]; then
-      # Resetting failed on a path unit can clear issues if it failed to load/watch.
       run systemctl reset-failed "$PATH_SERVICE" || error_exit "Failed to reset-failed state for $PATH_SERVICE" $EXIT_CODE_ACTION_FAILED
     fi
-    info "$TARGET_DESC service(s) failed state reset."
+    info "$TARGET_DESC service(s) failed state reset." # Keep as info
     ;;
   *)
-    # This case should ideally not be reached due to the ACTION_FLAG check after parsing.
     error_exit "Unhandled action: '$ACTION_FLAG'. Internal error." $EXIT_CODE_GENERAL_ERROR
     ;;
 esac
 
-SCRIPT_SUCCESSFUL=true # If we reach here, the action was dispatched and handled as intended.
-# The EXIT trap will now print the success message unless it was an informational action or help/version.
+SCRIPT_SUCCESSFUL=true
 exit $EXIT_CODE_SUCCESS

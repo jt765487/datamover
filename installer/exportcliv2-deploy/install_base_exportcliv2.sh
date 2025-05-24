@@ -399,9 +399,12 @@ main() {
   info "  Datamover wheel: '$VERSIONED_DATAMOVER_WHEEL_FILENAME' in '$PYTHON_VENV_PATH'" # Keep as info
   info "  Default instance EXPORT_TIMEOUT (from install-app.conf): '${EXPORT_TIMEOUT_CONFIG}' seconds (stored in '$BASE_VARS_FILE')" # Keep as info
 
-  if [[ -z "$DRY_RUN" ]]; then
-    info "To apply changes, services might need to be (re)started manually if not handled by an orchestrator." # Keep as info
-    info "Example: systemctl restart bitmover.service && systemctl restart ${APP_NAME}@your_instance.service" # Keep as info
+if [[ -z "$DRY_RUN" ]]; then
+    info "To apply changes, services might need to be (re)started if not handled by an orchestrator."
+    info "Use the 'manage_services.sh' script (located in the same directory as this installer)."
+    info "For example:"
+    info "  sudo ./manage_services.sh --restart                            # To restart the main bitmover service"
+    info "  sudo ./manage_services.sh -i your_instance_name --restart      # To restart a specific application instance"
   fi
 
   if [[ -n "$DRY_RUN" ]]; then
