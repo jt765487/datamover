@@ -133,17 +133,23 @@ fi
 EXTERNAL_APP_BINARY_FILENAME=$(basename "$EXTERNAL_APP_BINARY_PATH")
 
 info "Looking for the datamover wheel file in '$DATAMOVER_WHEEL_DIR'..."
+
+# Check if DATAMOVER_WHEEL_DIR exists first
+if [[ ! -d "$DATAMOVER_WHEEL_DIR" ]]; then
+  error_exit "Datamover wheel directory '$DATAMOVER_WHEEL_DIR' not found. Please build the datamover project (e.g., using 'uv build' or your project's build command) to generate the wheel file in this directory."
+fi
+
 # Try to find a wheel that matches the release version first
 datamover_wheel_file=$(find "$DATAMOVER_WHEEL_DIR" -maxdepth 1 -name "datamover*${RELEASE_VERSION}*.whl" -print -quit)
 
 if [[ -z "$datamover_wheel_file" || ! -f "$datamover_wheel_file" ]]; then
-  warn "Could not find datamover wheel matching version '$RELEASE_VERSION' directly."
-  info "Falling back to find any datamover*.whl file..."
+  warn "Could not find datamover wheel matching version '$RELEASE_VERSION' directly in '$DATAMOVER_WHEEL_DIR'."
+  info "Falling back to find any datamover*.whl file in '$DATAMOVER_WHEEL_DIR'..."
   datamover_wheel_file=$(find "$DATAMOVER_WHEEL_DIR" -maxdepth 1 -name "datamover*.whl" -print -quit)
 fi
 
 if [[ -z "$datamover_wheel_file" || ! -f "$datamover_wheel_file" ]]; then
-  error_exit "Datamover .whl file not found in '$DATAMOVER_WHEEL_DIR'. Please run 'uv build'."
+  error_exit "Datamover .whl file not found in '$DATAMOVER_WHEEL_DIR'. Please ensure the project is built (e.g., using 'uv build') and the wheel exists."
 fi
 DATAMOVER_WHEEL_FILENAME=$(basename "$datamover_wheel_file")
 
@@ -266,7 +272,7 @@ fi
 info "Creating tarball: ${ARCHIVE_NAME}"
 (
   cd "$STAGING_DIR" || exit 1
-  tar -czvf "../${ARCHIVE_NAME}" "$BUNDLE_TOP_DIR"
+  tar -czf "../${ARCHIVE_NAME}" "$BUNDLE_TOP_DIR"
 ) || error_exit "Failed to create tarball."
 
 info "--- Bundle Created Successfully: ${ARCHIVE_NAME} ---"
