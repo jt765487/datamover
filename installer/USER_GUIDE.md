@@ -1,4 +1,4 @@
-## Application Suite Deployment and Management Guide - Version 2.2
+# Application Suite Deployment and Management Guide - Version 2.2
 
 **Document Version:** 2.2
 **Application Suite Orchestrator Version:** v2.4.6
@@ -71,31 +71,31 @@ The deployment process starts with the `exportcliv2-suite-vX.Y.Z.tar.gz` package
 The structure of the extracted package is as follows:
 
 ```
-    exportcliv2-suite-vX.Y.Z/
-    ├── deploy_orchestrator.sh                # Main script to drive installation or updates (v2.4.6)
-    ├── QUICK_START_GUIDE.md                  # Quick start guide
-    ├── USER_GUIDE.md                         # This comprehensive user guide
+exportcliv2-suite-vX.Y.Z/
+├── deploy_orchestrator.sh                # Main script to drive installation or updates (v2.4.6)
+├── QUICK_START_GUIDE.md                  # Quick start guide
+├── USER_GUIDE.md                         # This comprehensive user guide
+│
+└── exportcliv2-deploy/                   # Deployment subdirectory
+    ├── install_base_exportcliv2.sh       # Core installer for base system (v1.3.2)
+    ├── configure_instance.sh             # Script to set up individual exportcliv2 instances
+    ├── manage_services.sh                # Script for everyday service management (v1.3.2)
     │
-    └── exportcliv2-deploy/                   # Deployment subdirectory
-        ├── install_base_exportcliv2.sh       # Core installer for base system (v1.3.2)
-        ├── configure_instance.sh             # Script to set up individual exportcliv2 instances
-        ├── manage_services.sh                # Script for everyday service management (v1.3.2)
-        │
-        ├── install-app.conf                  # Primary configuration for the installer scripts
-        │
-        ├── exportcliv2-vA.B.C                # The versioned exportcliv2 binary itself
-        ├── datamover-vX.Y.Z-py3-none-any.whl # The versioned Python wheel for bitmover
-        │
-        ├── config_files/                     # Directory for config file templates
-        │   ├── common.auth.conf              # (Optional) For shared authentication tokens
-        │   ├── config.ini.template           # Template for bitmover's INI configuration
-        │   └── run_exportcliv2_instance.sh.template # Wrapper script template for exportcliv2
-        │
-        └── systemd_units/                    # Directory for systemd unit file templates
-            ├── bitmover.service.template
-            ├── exportcliv2@.service.template
-            ├── exportcliv2-restart@.path.template
-            └── exportcliv2-restart@.service.template
+    ├── install-app.conf                  # Primary configuration for the installer scripts, including settings for core paths and an optional override for Bitmover's log directory.
+    │
+    ├── exportcliv2-vA.B.C                # The versioned exportcliv2 binary itself
+    ├── datamover-vX.Y.Z-py3-none-any.whl # The versioned Python wheel for bitmover
+    │
+    ├── config_files/                     # Directory for config file templates
+    │   ├── common.auth.conf              # (Optional) For shared authentication tokens
+    │   ├── config.ini.template           # Template for bitmover's INI configuration
+    │   └── run_exportcliv2_instance.sh.template # Wrapper script template for exportcliv2
+    │
+    └── systemd_units/                    # Directory for systemd unit file templates
+        ├── bitmover.service.template
+        ├── exportcliv2@.service.template   # Utilizes systemd features for instance-specific log directory management.
+        ├── exportcliv2-restart@.path.template
+        └── exportcliv2-restart@.service.template
 ```
 
 ---
@@ -126,6 +126,7 @@ Before running the Orchestrator, configure `exportcliv2-deploy/install-app.conf`
     *   `USER_CONFIG` (default: `"exportcliv2_user"`)
     *   `GROUP_CONFIG` (default: `"exportcliv2_group"`, your example uses `"datapipeline_group"`)
     *   `BASE_DIR_CONFIG` (default: `"/opt/exportcliv2"`)
+    *   `BITMOVER_LOG_DIR_CONFIG` (default: `"/var/log/exportcliv2/bitmover"`)
     Detailed comments within the file explain each option (See Appendix A.1).
 
 ### 4.2 Step 2: Run the Orchestrator Script for Installation
@@ -176,7 +177,7 @@ When run with `--install`, the `deploy_orchestrator.sh` script performs:
     *   The sub-script logs "Starting installation..."
     *   Reads settings from `exportcliv2-deploy/install-app.conf`.
     *   Creates the application user/group (e.g., `exportcliv2_user`, `datapipeline_group`).
-    *   Creates directory structures.
+    *   Creates core application directory structures, including the base log directory `/var/log/exportcliv2/` (by default) and the specific Bitmover log directory (default: `/var/log/exportcliv2/bitmover/`).
     *   Copies binaries and wheel to installation locations, creates symlinks.
     *   Sets up Python virtual environment for bitmover and installs the wheel.
     *   Deploys wrapper scripts and systemd unit files from templates.
@@ -229,7 +230,7 @@ For each `exportcliv2` instance (e.g., `ABC`), edit its environment configuratio
 
 ### 5.4 bitmover Service Configuration (`config.ini`)
 
-(Content as before - this file, typically at `/opt/exportcliv2/bitmover/config.ini` or `/etc/exportcliv2/config.ini`, configures the bitmover service, including `remote_host_url`.)
+This file, located at `/etc/exportcliv2/config.ini` (by default), configures the bitmover service, including the `remote_host_url` and its specific logging path (populated during installation from `install-app.conf`).
 
 ### 5.5 Restarting Services After Configuration Changes
 
@@ -372,10 +373,14 @@ Examples:
 
 ## 8. Troubleshooting
 
-(Content largely the same, ensure it refers to `exportcli-manage` where applicable for checking logs, status, etc.)
 *   Check service status: `sudo exportcli-manage --status` or `sudo exportcli-manage -i <INSTANCE_NAME> --status`.
-*   View logs: `journalctl -u bitmover.service`, `journalctl -u exportcliv2@<INSTANCE_NAME>.service`.
-*   Verify configuration files in `/etc/exportcliv2/` and `/opt/exportcliv2/`.
+*   View logs captured by systemd: `journalctl -u bitmover.service`, `journalctl -u exportcliv2@<INSTANCE_NAME>.service`.
+*   Verify configuration files in `/etc/exportcliv2/`.
+
+For more detailed troubleshooting, or if applications write their own log/status files not captured by `journalctl`:
+
+*   **Bitmover Logs:** Check the directory specified during installation (default: `/var/log/exportcliv2/bitmover/`, or as set by `BITMOVER_LOG_DIR_CONFIG` in `install-app.conf`). The `config.ini` for Bitmover (at `/etc/exportcliv2/config.ini`) will also reference its configured log path.
+*   **exportcliv2 Instance Files:** The `exportcliv2@<INSTANCE_NAME>.service` instances use `/var/log/exportcliv2/<INSTANCE_NAME>/` as their working directory and for logs managed by systemd's `LogsDirectory=` feature. This directory is automatically created by systemd. Any files generated directly by an instance (e.g., temporary files, specific status files, or direct log files not sent to standard output/error which would be captured by journald) would be found here.
 
 ---
 
@@ -409,23 +414,38 @@ EXPORT_TIMEOUT_CONFIG="15"
 # USER_CONFIG="exportcliv2_user"
 
 # GROUP_CONFIG: Service group name. Default: "exportcliv2_group"
-GROUP_CONFIG="datapipeline_group" # Example from your tests
+# GROUP_CONFIG="datapipeline_group" # Example from your tests
 
 # BASE_DIR_CONFIG: Base installation directory. Default: "/opt/exportcliv2"
 # BASE_DIR_CONFIG="/var/tmp/testme" # Example from your tests
 
-# ... other optional path overrides for binaries, logs, configs etc. ...
-# LOG_DIR_CONFIG="/var/log/exportcliv2"
-# CONFIG_DIR_CONFIG="/etc/exportcliv2"
-# APP_BINARY_INSTALL_DIR_CONFIG="${BASE_DIR_CONFIG}/bin"
-# DATAMOVER_INSTALL_DIR_CONFIG="${BASE_DIR_CONFIG}/bitmover"
-# WRAPPER_SCRIPTS_INSTALL_DIR_CONFIG="${BASE_DIR_CONFIG}/scripts"
-# SYSTEMD_UNIT_DIR_CONFIG="/etc/systemd/system"
-# PYTHON_VENV_PARENT_DIR_CONFIG="${DATAMOVER_INSTALL_DIR_CONFIG}"
-# DEFAULT_VARS_FILE_CONFIG="/etc/default/exportcliv2_base_vars"
+# PYTHON_VENV_DIR_NAME: Name of the Python virtual environment directory for Bitmover.
+# Default: "datamover_venv" (created under DATAMOVER_INSTALL_DIR_CONFIG, which is derived from BASE_DIR_CONFIG)
+# PYTHON_VENV_DIR_NAME="my_bitmover_env"
+
+# BITMOVER_LOG_DIR_CONFIG: Overrides the default log directory for Bitmover.
+# The base log directory /var/log/exportcliv2/ is created by the installer.
+# This variable defines a subdirectory within /var/log/exportcliv2/ for Bitmover's specific logs,
+# or an entirely custom path if an absolute path is provided.
+# Default: "/var/log/exportcliv2/bitmover"
+# Example: BITMOVER_LOG_DIR_CONFIG="/var/log/my_app/custom_bitmover_logs"
+# Example (relative to /var/log/exportcliv2/): BITMOVER_LOG_DIR_CONFIG="bitmover_custom_logs"
+
+# --- Advanced Optional Overrides (rarely changed) ---
+# SYSTEMD_TEMPLATES_SUBDIR: Subdirectory within the deployment package containing systemd unit templates.
+# Default: "systemd_units"
+# SYSTEMD_TEMPLATES_SUBDIR="my_custom_systemd_units"
+
+# COMMON_CONFIGS_SUBDIR: Subdirectory within the deployment package containing common config file templates.
+# Default: "config_files"
+# COMMON_CONFIGS_SUBDIR="my_common_configs"
+
+# Note: Other path configurations (like where binaries are installed, or the main application config directory /etc/exportcliv2)
+# are derived from BASE_DIR_CONFIG or are hardcoded conventions in the installer (e.g., /etc/exportcliv2).
+# The main application log directory /var/log/exportcliv2 is also a fixed convention of the installer.
 ```
 
-**Key takeaway**: `DEFAULT_INSTANCES_CONFIG` is now a key orchestrator input. `VERSIONED_*_FILENAME` variables must match files in `exportcliv2-deploy/`. `REMOTE_HOST_URL_CONFIG` and `EXPORT_TIMEOUT_CONFIG` are crucial functional settings that get propagated during initial setup.
+**Key takeaway**: `DEFAULT_INSTANCES_CONFIG` is now a key orchestrator input. `VERSIONED_*_FILENAME` variables must match files in `exportcliv2-deploy/`. `REMOTE_HOST_URL_CONFIG` and `EXPORT_TIMEOUT_CONFIG` are crucial functional settings that get propagated during initial setup. `BITMOVER_LOG_DIR_CONFIG` allows customization of Bitmover's log location.
 
 ### A.2 `run_exportcliv2_instance.sh.template`
 
@@ -437,14 +457,15 @@ GROUP_CONFIG="datapipeline_group" # Example from your tests
 
 ### A.4 `config.ini.template` (Bitmover Configuration)
 
-(Content largely the same - template for `/opt/exportcliv2/bitmover/config.ini` or `/etc/exportcliv2/config.ini` used by the bitmover service. `REMOTE_HOST_URL_CONFIG` from `install-app.conf` populates this during installation.)
+(Template for `/etc/exportcliv2/config.ini` (by default). `REMOTE_HOST_URL_CONFIG` from `install-app.conf` and the configured Bitmover log path (from `BITMOVER_LOG_DIR_CONFIG` in `install-app.conf`) populate this template during installation.)
 
 ### A.5 Systemd Unit Templates Overview
 
-(Content largely the same - describes `bitmover.service.template`, `exportcliv2@.service.template`, and the restart path/service templates.)
+Describes `bitmover.service.template`, `exportcliv2@.service.template`, and the restart path/service templates.
 
----
+*   **`exportcliv2@.service.template` specific notes:**
+    *   This template uses the systemd directive `LogsDirectory=exportcliv2/%i`. This instructs systemd to automatically create a unique directory for each instance (e.g., `/var/log/exportcliv2/ABC/`) before the service starts.
+    *   This directory is owned by the service user (`{{APP_USER}}`) and group (`{{APP_GROUP}}`) with permissions suitable for logging (e.g., 0750).
+    *   The `WorkingDirectory` for each `exportcliv2` instance is also set to this systemd-managed path (e.g., `/var/log/exportcliv2/ABC/`). This means any relative file paths used by the `exportcliv2` application instance will resolve within its dedicated log/working directory.
 
-## 10. Appendix B: System Architecture Diagram (Conceptual)
 
-(Placeholder for your system diagram image/description)
