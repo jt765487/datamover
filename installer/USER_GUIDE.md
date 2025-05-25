@@ -1,4 +1,4 @@
-# Application Suite Deployment and Management Guide - Version 2.2
+## Application Suite Deployment and Management Guide - Version 2.2
 
 **Document Version:** 2.2
 **Application Suite Orchestrator Version:** v2.4.6
@@ -420,16 +420,16 @@ EXPORT_TIMEOUT_CONFIG="15"
 # BASE_DIR_CONFIG="/var/tmp/testme" # Example from your tests
 
 # PYTHON_VENV_DIR_NAME: Name of the Python virtual environment directory for Bitmover.
-# Default: "datamover_venv" (created under DATAMOVER_INSTALL_DIR_CONFIG, which is derived from BASE_DIR_CONFIG)
+# Default: "datamover_venv" (created directly under the effective BASE_DIR, e.g., /opt/exportcliv2/datamover_venv)
 # PYTHON_VENV_DIR_NAME="my_bitmover_env"
 
 # BITMOVER_LOG_DIR_CONFIG: Overrides the default log directory for Bitmover.
 # The base log directory /var/log/exportcliv2/ is created by the installer.
-# This variable defines a subdirectory within /var/log/exportcliv2/ for Bitmover's specific logs,
-# or an entirely custom path if an absolute path is provided.
+# This variable should be an absolute path if you wish to place Bitmover's logs
+# outside the default /var/log/exportcliv2/bitmover/ location.
 # Default: "/var/log/exportcliv2/bitmover"
-# Example: BITMOVER_LOG_DIR_CONFIG="/var/log/my_app/custom_bitmover_logs"
-# Example (relative to /var/log/exportcliv2/): BITMOVER_LOG_DIR_CONFIG="bitmover_custom_logs"
+# Example (custom absolute path): BITMOVER_LOG_DIR_CONFIG="/var/log/my_app/custom_bitmover_logs"
+# Example (custom path under main app log dir): BITMOVER_LOG_DIR_CONFIG="/var/log/exportcliv2/bitmover_variant_logs"
 
 # --- Advanced Optional Overrides (rarely changed) ---
 # SYSTEMD_TEMPLATES_SUBDIR: Subdirectory within the deployment package containing systemd unit templates.
@@ -445,7 +445,7 @@ EXPORT_TIMEOUT_CONFIG="15"
 # The main application log directory /var/log/exportcliv2 is also a fixed convention of the installer.
 ```
 
-**Key takeaway**: `DEFAULT_INSTANCES_CONFIG` is now a key orchestrator input. `VERSIONED_*_FILENAME` variables must match files in `exportcliv2-deploy/`. `REMOTE_HOST_URL_CONFIG` and `EXPORT_TIMEOUT_CONFIG` are crucial functional settings that get propagated during initial setup. `BITMOVER_LOG_DIR_CONFIG` allows customization of Bitmover's log location.
+**Key takeaway**: `DEFAULT_INSTANCES_CONFIG` is now a key orchestrator input. `VERSIONED_*_FILENAME` variables must match files in `exportcliv2-deploy/`. `REMOTE_HOST_URL_CONFIG` and `EXPORT_TIMEOUT_CONFIG` are crucial functional settings that get propagated during initial setup. `BITMOVER_LOG_DIR_CONFIG` allows customization of Bitmover's log location using an absolute path.
 
 ### A.2 `run_exportcliv2_instance.sh.template`
 
@@ -467,5 +467,3 @@ Describes `bitmover.service.template`, `exportcliv2@.service.template`, and the 
     *   This template uses the systemd directive `LogsDirectory=exportcliv2/%i`. This instructs systemd to automatically create a unique directory for each instance (e.g., `/var/log/exportcliv2/ABC/`) before the service starts.
     *   This directory is owned by the service user (`{{APP_USER}}`) and group (`{{APP_GROUP}}`) with permissions suitable for logging (e.g., 0750).
     *   The `WorkingDirectory` for each `exportcliv2` instance is also set to this systemd-managed path (e.g., `/var/log/exportcliv2/ABC/`). This means any relative file paths used by the `exportcliv2` application instance will resolve within its dedicated log/working directory.
-
-

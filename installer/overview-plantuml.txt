@@ -1,0 +1,96 @@
+skinparam rectangle {
+  Shadowing false
+  RoundCorner 5
+}
+skinparam packageStyle rectangle
+skinparam defaultTextAlignment center
+
+' --- Entities created in Phase 1 and potentially used across phases ---
+rectangle "<INSTANCE_NAME>.conf\n(File for instance env)" as INSTANCE_SPECIFIC_CONF
+rectangle "<INSTANCE_NAME>_app.conf\n(File for instance app config)" as INSTANCE_APP_SPECIFIC_CONF
+rectangle "config.ini\n(/etc/exportcliv2/config.ini)" as BITMOVER_INI_FILE
+
+' --- Log directory entities for clarity ---
+rectangle "/var/log/exportcliv2/\n(Base Log Dir for App)" as APP_BASE_LOG_DIR
+rectangle "BITMOVER_LOG_DIR\n(Actual Bitmover Log Dir e.g.\n/var/log/exportcliv2/bitmover\nor custom path from install-app.conf)" as BITMOVER_EFFECTIVE_LOG_DIR
+rectangle "/var/log/exportcliv2/%i\n(Instance Log/Working Dir)" as INSTANCE_LOG_WORKING_DIR
+
+
+package "Phase 1: Setup / Installation" {
+  actor UserAdmin as UA
+
+  rectangle "install-app.conf\n(Main Config File)" as MAIN_INSTALL_CONF
+  rectangle "deploy_orchestrator.sh\n(Script)" as DEPLOY
+  rectangle "install_base_exportcliv2.sh\n(Script)" as BASE_INSTALLER
+  rectangle "configure_instance.sh\n(Script)" as CONFIGURE_INSTANCE
+  rectangle "manage_services.sh\n(Script)" as MGR
+  rectangle "/etc/default/exportcliv2_base_vars\n(File)" as BASE_VARS_FILE
+  ' BITMOVER_INI_FILE defined globally for clarity
+  rectangle "Source Templates\n(systemd unit files,\nwrapper script, config.ini)" as SOURCE_TEMPLATES
+  rectangle "Installed Components\n(Binaries/Symlinks/Venv)" as INSTALLED_COMPONENTS
+  rectangle "Systemd Unit Definitions\n(Written to disk, e.g.,\nbitmover.service,\nexportcliv2@.service which uses\n'LogsDirectory=exportcliv2/%i')" as SYSTEMD_UNIT_FILES_ON_DISK
+
+  UA --> MAIN_INSTALL_CONF      : edits
+  UA --> DEPLOY                 : executes\n(--install -i <instances>)
+  DEPLOY --> BASE_INSTALLER      : calls\n(-c install-app.conf)
+  BASE_INSTALLER --> MAIN_INSTALL_CONF : reads
+  BASE_INSTALLER --> SOURCE_TEMPLATES   : uses
+  BASE_INSTALLER --> BASE_VARS_FILE     : creates/updates
+  BASE_INSTALLER --> INSTALLED_COMPONENTS: creates/updates
+  BASE_INSTALLER --> BITMOVER_INI_FILE       : creates/updates (from template)
+  BASE_INSTALLER --> SYSTEMD_UNIT_FILES_ON_DISK : installs/reloads (from template)
+
+  ' Log directory creation by Base Installer
+  BASE_INSTALLER --> APP_BASE_LOG_DIR            : creates
+  BASE_INSTALLER --> BITMOVER_EFFECTIVE_LOG_DIR  : creates
+
+  DEPLOY --> CONFIGURE_INSTANCE    : calls\n(-i <instance>)
+  CONFIGURE_INSTANCE --> BASE_VARS_FILE       : reads
+  CONFIGURE_INSTANCE --> INSTANCE_SPECIFIC_CONF: creates
+  CONFIGURE_INSTANCE --> INSTANCE_APP_SPECIFIC_CONF: creates
+
+  DEPLOY --> MGR                 : calls\n(manage services e.g., enable/start)
+  MGR --> SYSTEMD_UNIT_FILES_ON_DISK     : interacts with\n(via Systemd daemon)
+}
+
+package "Phase 2: Runtime: exportcliv2 Instance" {
+  rectangle "Systemd Daemon (runtime)" as SYSTEMD_DAEMON_P2
+  rectangle "exportcliv2@<INSTANCE>.service\n(Active Unit)" as EXPORTCLIV2_SERVICE
+  rectangle "common.auth.conf\n(File)" as COMMON_AUTH_CONF
+  rectangle "run_exportcliv2_instance.sh\n(Wrapper Script)" as WRAPPER_SCRIPT
+  rectangle "exportcliv2 Binary\n(Executable)" as EXPORTCLIV2_BINARY
+
+  SYSTEMD_DAEMON_P2 --> EXPORTCLIV2_SERVICE    : starts
+
+  ' Systemd creates instance log/work dir due to 'LogsDirectory' in the unit file
+  EXPORTCLIV2_SERVICE ..> INSTANCE_LOG_WORKING_DIR : creates (via LogsDirectory=)\n& uses as WorkingDirectory
+
+  EXPORTCLIV2_SERVICE --> COMMON_AUTH_CONF     : EnvironmentFile
+  EXPORTCLIV2_SERVICE --> INSTANCE_SPECIFIC_CONF : EnvironmentFile
+  EXPORTCLIV2_SERVICE --> WRAPPER_SCRIPT       : executes
+
+  WRAPPER_SCRIPT --> INSTANCE_SPECIFIC_CONF    : reads env vars
+  WRAPPER_SCRIPT --> COMMON_AUTH_CONF         : reads env vars
+  WRAPPER_SCRIPT --> INSTANCE_APP_SPECIFIC_CONF : loads via EXPORT_APP_CONFIG_FILE_PATH
+  WRAPPER_SCRIPT --> EXPORTCLIV2_BINARY        : execs
+
+  ' If exportcliv2 binary writes files directly (not stdout/stderr)
+  ' EXPORTCLIV2_BINARY ..> INSTANCE_LOG_WORKING_DIR : writes app-specific files
+}
+
+package "Phase 3: Runtime: Bitmover Service" {
+  rectangle "Systemd Daemon (runtime)" as SYSTEMD_DAEMON_P3
+  rectangle "bitmover.service\n(Active Unit)" as BITMOVER_SERVICE
+  rectangle "bitmover Script\n(Python Executable from Venv)" as BITMOVER_SCRIPT_EXEC
+
+  SYSTEMD_DAEMON_P3 --> BITMOVER_SERVICE     : starts
+  BITMOVER_SERVICE --> BITMOVER_SCRIPT_EXEC      : executes
+  BITMOVER_SCRIPT_EXEC --> BITMOVER_INI_FILE          : reads config (incl. log path)
+
+  ' Bitmover script writes to its configured log directory
+  BITMOVER_SCRIPT_EXEC ..> BITMOVER_EFFECTIVE_LOG_DIR : writes logs
+}
+
+' Conceptual link: unit files loaded by systemd define runtime behavior
+SYSTEMD_UNIT_FILES_ON_DISK -[hidden]-> SYSTEMD_DAEMON_P2
+SYSTEMD_UNIT_FILES_ON_DISK -[hidden]-> SYSTEMD_DAEMON_P3
