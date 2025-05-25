@@ -563,6 +563,7 @@ main() {
   create_group_if_not_exists "$APP_GROUP"
   create_user_if_not_exists "$APP_USER" "$APP_GROUP" "$BASE_DIR"
 
+  ensure_directory "/var/log/${APP_NAME}"     "root"      "root"       "0755"
   ensure_directory "$ETC_DIR"                 "root"      "$APP_GROUP" "0755"
   ensure_directory "$BASE_DIR"                "$APP_USER" "$APP_GROUP" "0750"
   ensure_directory "${BASE_DIR}/bin"          "root"      "$APP_GROUP" "0755"

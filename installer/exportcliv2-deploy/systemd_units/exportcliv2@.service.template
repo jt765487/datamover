@@ -1,5 +1,5 @@
 [Unit]
-Description=exportcliv2 instance %I
+Description={{APP_NAME}} instance %I
 After=network-online.target
 Wants=network-online.target
 
@@ -7,29 +7,31 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-User=exportcliv2_user
-Group=datapipeline_group
+User={{APP_USER}}
+Group={{APP_GROUP}}
 UMask=0027
-WorkingDirectory=/var/tmp/testme
+
+# Systemd creates /var/log/{{APP_NAME}}/%i owned by User:Group ({{APP_USER}}:{{APP_GROUP}})
+LogsDirectory={{APP_NAME}}/%i
+LogsDirectoryMode=0750
+
+WorkingDirectory=/var/log/{{APP_NAME}}/%i
 
 # Remove any existing restart trigger file before starting
-ExecStartPre=-/usr/bin/rm -f /var/tmp/testme/csv/%i.restart
+ExecStartPre=-/usr/bin/rm -f {{CSV_DATA_DIR}}/%i.restart
 
 # Check if the required directories are present and writable
-ExecStartPre=/usr/bin/test -d /var/tmp/testme/source -a -w /var/tmp/testme/source
-ExecStartPre=/usr/bin/test -d /var/tmp/testme/csv -a -w /var/tmp/testme/csv
+ExecStartPre=/usr/bin/test -d {{SOURCE_DATA_DIR}} -a -w {{SOURCE_DATA_DIR}}
+ExecStartPre=/usr/bin/test -d {{CSV_DATA_DIR}} -a -w {{CSV_DATA_DIR}}
 
-# Load common auth first, then instance-specific configurations.
-# These environment variables will be available to the ExecStart script.
-EnvironmentFile=/etc/exportcliv2/common.auth.conf
-EnvironmentFile=/etc/exportcliv2/%i.conf
+EnvironmentFile={{ETC_DIR}}/common.auth.conf
+EnvironmentFile={{ETC_DIR}}/%i.conf
 
-# ExecStart now calls the wrapper script, passing the instance name.
-ExecStart=/var/tmp/testme/bin/run_exportcliv2_instance.sh %i
+ExecStart={{INSTALLED_WRAPPER_SCRIPT_PATH}} %i
 
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=exportcliv2@%i
+SyslogIdentifier={{APP_NAME}}@%i
 Restart=on-failure
 RestartSec=5s
 
