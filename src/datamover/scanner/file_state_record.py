@@ -19,7 +19,7 @@ class FileStateRecord:
                     of the file as observed in the current scan cycle.
         first_seen_mono: The monotonic clock time (e.g., from time.monotonic()) when
                          this file path was first detected by the monitoring process.
-                         This time is preserved across subsequent scans for the same path.
+                         This time is preserved across later scans for the same path.
         prev_scan_size: The size of the file in bytes as observed in the *previous*
                         scan cycle. For newly detected files, this is initialized
                         to the file's current size in its first record.

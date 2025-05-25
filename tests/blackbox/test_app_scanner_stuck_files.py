@@ -266,7 +266,7 @@ class TestAppScannerStuckAndLostFiles:
         lost_log = find_log_record(
             caplog,
             logging.INFO,
-            required_substrings=["Identified file as LOST", str(pcap_source_path)],
+            required_substrings=["Identified a new file as LOST", str(pcap_source_path)],
         )
         assert (
             lost_log is not None

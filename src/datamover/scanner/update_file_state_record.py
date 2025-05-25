@@ -39,7 +39,6 @@ def update_file_state_record(
     Args:
         existing_file_states: A dictionary mapping file Paths to their
                                `FileStateRecord` from the previous scan cycle.
-                               This can be empty if it's the first scan.
         gathered_data: A list of `GatheredEntryData` objects, representing
                        files found and their properties (path, size, mtime)
                        from the current directory scan.

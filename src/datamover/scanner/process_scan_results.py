@@ -97,8 +97,9 @@ def process_scan_results(
         gathered_data=gathered_data,
         monotonic_time_now=monotonic_now,
     )
+
     logger.debug(
-        "State update complete. Next states: %d, Removed tracking: %d",
+        "State update complete. Number of files being watched: %d, Removed tracking this cycle: %d",
         len(next_file_states),
         len(removed_tracking_paths),
     )
@@ -108,40 +109,28 @@ def process_scan_results(
     currently_stuck_active_paths: set[Path] = set()
 
     lost_check_count = 0
-    stuck_check_eligible_count = 0  # Count files eligible for stuck check
+    stuck_check_eligible_count = 0
 
     for path, state in next_file_states.items():
         # --- 'Lost' File Check ---
         if path in existing_states:
             lost_check_count += 1
             if is_file_lost(
-                state=state, wall_time_now=wall_now, lost_timeout=lost_timeout
+                    state=state, wall_time_now=wall_now, lost_timeout=lost_timeout
             ):
                 currently_lost_paths.add(path)
                 logger.info(
-                    "Identified file as LOST: %s (mtime: %s, age: %.1fs > %.1fs)",
+                    "Identified a new file as LOST: %s (mtime: %s, age: %.1fs > %.1fs)",
                     path,
                     state.mtime_wall,
                     (wall_now - state.mtime_wall),
                     lost_timeout,
                 )
-        # else: New file, not checked for 'lost' status this cycle.
+                # Skip stuck‐active check for anything already lost
+                continue
 
         # --- 'Stuck Active' File Check ---
-        # A file can be stuck and active regardless of whether it's new or existing,
-        # but the helper functions naturally handle the "new" case.
-        # is_active_since_last_scan returns False for new files because prev_scan_size/mtime
-        # are initialized to current size/mtime.
-        # is_file_present_too_long uses first_seen_mono, which is monotonic_now for new files,
-        # so it won't typically exceed stuck_active_timeout immediately.
-
-        # For a file to be "stuck active", it must be:
-        # 1. Active since the last scan
-        # 2. Present for longer than the stuck_active_timeout
-        stuck_check_eligible_count += (
-            1  # All files in next_file_states are technically eligible for this check
-        )
-
+        stuck_check_eligible_count += 1
         active = is_active_since_last_scan(record=state)
         present_too_long = is_file_present_too_long(
             state=state,
@@ -152,15 +141,14 @@ def process_scan_results(
         if active and present_too_long:
             currently_stuck_active_paths.add(path)
             logger.info(
-                "Identified file as STUCK ACTIVE: %s (first_seen_mono: %s, age_mono: %.1fs > %.1fs, active: %s)",
+                "Identified file as STUCK ACTIVE: %s (first_seen_mono: %s, age_mono: %.1fs > %.1fs)",
                 path,
                 state.first_seen_mono,
                 (monotonic_now - state.first_seen_mono),
                 stuck_active_timeout,
-                active,
             )
-        elif present_too_long and not active:
-            # Log if a file is present too long but not active (might be interesting)
+        elif present_too_long:
+            # present too long but didn’t change
             logger.info(
                 "File %s present too long (%.1fs) but NOT active.",
                 path,
