@@ -322,13 +322,23 @@ Instance '${INSTANCE}' of '${APP_NAME}' configuration files processed:
   Env Config: ${TARGET_ENV_CONF_FILE}
   App Config: ${TARGET_APP_SPECIFIC_CONFIG_FILE}
 -----------------------------------------------------------------------------
-Next Steps: Manage this instance with systemd:
-  sudo systemctl enable ${main_service_name} ${path_service_name}
-  sudo systemctl start ${main_service_name}
-  sudo systemctl status ${main_service_name} ${path_service_name}
-  sudo journalctl -u ${main_service_name} -f
+Next Steps:
+The deployment orchestrator (if used) typically handles enabling and starting
+services after configuration.
+
+To manage this instance ('${INSTANCE}') manually, use 'exportcli-manage':
+  sudo exportcli-manage -i ${INSTANCE} --status        # Check status
+  sudo exportcli-manage -i ${INSTANCE} --enable         # Enable services for boot
+  sudo exportcli-manage -i ${INSTANCE} --start          # Start services
+  sudo exportcli-manage -i ${INSTANCE} --restart        # Restart services
+  sudo exportcli-manage -i ${INSTANCE} --stop           # Stop services
+  sudo exportcli-manage -i ${INSTANCE} --disable        # Disable services for boot
+  sudo exportcli-manage -i ${INSTANCE} --logs           # View recent logs
+  sudo exportcli-manage -i ${INSTANCE} --logs-follow    # Follow live logs
 -----------------------------------------------------------------------------
-Remember to review/edit config files if defaults were generated or sourced.
+Remember to review/edit the generated configuration files as needed:
+  - ${TARGET_ENV_CONF_FILE} (especially EXPORT_IP, EXPORT_PORTID)
+  - ${TARGET_APP_SPECIFIC_CONFIG_FILE} (if instance-specific app settings are required)
 -----------------------------------------------------------------------------
 EOF
     SCRIPT_SUCCESSFUL=true

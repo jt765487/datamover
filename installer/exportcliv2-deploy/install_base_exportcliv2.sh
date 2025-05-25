@@ -6,8 +6,11 @@ IFS=$'\n\t'
 # -----------------------------------------------------------------------------
 # Base Installer for exportcliv2 + bitmover
 # Standardized argument parsing, logging, dry-run, error handling.
+# v1.3.1: Improved error handling for group/user creation.
+# v1.3.2: Added --operation-type flag handling for context-aware logging
+#         and conditional display of restart advice.
 # -----------------------------------------------------------------------------
-VERSION_INSTALL_BASE="1.3.0" # Script version
+VERSION_INSTALL_BASE="1.3.2" # Script version
 
 # --- Colorized Logging (Standardized) ---
 CSI=$'\033['
@@ -41,20 +44,18 @@ error_exit() { local message="$1"; local exit_code="${2:-$EXIT_CODE_FATAL_ERROR}
 # --- Globals (Standardized where applicable) ---
 VERBOSE_MODE=false
 DRY_RUN=false
-SCRIPT_SUCCESSFUL=false # Set to true at the end of successful main execution
+SCRIPT_SUCCESSFUL=false
 HELP_OR_VERSION_EXIT=false
-FAIL_COUNT=0 # For non-fatal errors tracked by run helper
+FAIL_COUNT=0
 
 readonly APP_NAME="exportcliv2"
-CONFIG_FILE_NAME_ARG="install-app.conf" # Default filename
+CONFIG_FILE_NAME_ARG="install-app.conf"
+OPERATION_TYPE_CONTEXT="" # Set by --operation-type from orchestrator
 
 # --- Trap Handling (Standardized) ---
 # shellcheck disable=SC2317
 _cleanup_on_error_base() {
-    local exit_code="$1"
-    local line_no="$2"
-    local command="$3"
-    echo
+    local exit_code="$1"; local line_no="$2"; local command="$3"; echo;
     warn "--- BASE INSTALLER ERROR DETECTED ---"
     error_exit "Error on or near line ${line_no} in $(basename "${BASH_SOURCE[0]}"): command '${command}' returned exit code ${exit_code}." "${exit_code:-$EXIT_CODE_FATAL_ERROR}"
 }
@@ -63,20 +64,25 @@ _cleanup_on_exit_base() {
     local exit_code=$?
     if [[ "$HELP_OR_VERSION_EXIT" == true ]]; then return; fi
     echo
+    local script_name_for_log; script_name_for_log=$(basename "${BASH_SOURCE[0]}")
+    local main_action_verb_for_log="Operation"
+    if [[ "$OPERATION_TYPE_CONTEXT" == "install" ]]; then main_action_verb_for_log="Installation";
+    elif [[ "$OPERATION_TYPE_CONTEXT" == "update" ]]; then main_action_verb_for_log="Update";
+    fi
+
     if [[ "$exit_code" -eq "$EXIT_CODE_SUCCESS" && "$SCRIPT_SUCCESSFUL" == true ]]; then
-        info "▶ Base Installation Script ($(basename "${BASH_SOURCE[0]}")) finished successfully."
+        info "▶ Base ${main_action_verb_for_log} Script (${script_name_for_log}) finished successfully."
     elif [[ "$exit_code" -eq "$EXIT_CODE_PARTIAL_SUCCESS" || ("$exit_code" -eq "$EXIT_CODE_SUCCESS" && "$FAIL_COUNT" -gt 0 && "$SCRIPT_SUCCESSFUL" == true) ]]; then
-        warn "▶ Base Installation Script ($(basename "${BASH_SOURCE[0]}")) finished with $FAIL_COUNT non-fatal error(s). Review output."
+        warn "▶ Base ${main_action_verb_for_log} Script (${script_name_for_log}) finished with $FAIL_COUNT non-fatal error(s). Review output."
     elif [[ "$exit_code" -ne "$EXIT_CODE_SUCCESS" ]]; then
-        echo -e "${C_ERROR}$(_ts) [ERROR] ▶ Base Installation Script ($(basename "${BASH_SOURCE[0]}")) failed. Review error messages above.${C_RESET}" >&2
+        echo -e "${C_ERROR}$(_ts) [ERROR] ▶ Base ${main_action_verb_for_log} Script (${script_name_for_log}) failed. Review error messages above.${C_RESET}" >&2
     else
-        warn "▶ Base Installation Script ($(basename "${BASH_SOURCE[0]}")) finished. Status unclear (exit code 0, but not marked successful)."
+        warn "▶ Base ${main_action_verb_for_log} Script (${script_name_for_log}) finished. Status unclear (exit code 0, but not marked successful)."
     fi
 }
 trap '_cleanup_on_error_base "$?" "$LINENO" "$BASH_COMMAND"' ERR
 trap '_cleanup_on_exit_base' EXIT
 trap 'error_exit "Script $(basename "${BASH_SOURCE[0]}") interrupted by signal." "$EXIT_CODE_FATAL_ERROR"' INT TERM
-
 
 # --- Standardized run Helper ---
 run() {
@@ -92,8 +98,8 @@ run() {
   local ec=$?
   if [[ $ec -ne 0 ]]; then
     warn "Command failed with exit code $ec: $cmd_display"
-    ((FAIL_COUNT++)) # Increment global fail count for non-fatal tracking
-    return $ec      # Propagate specific error code
+    ((FAIL_COUNT++))
+    return $ec
   fi
   return "$EXIT_CODE_SUCCESS"
 }
@@ -112,17 +118,18 @@ It expects to find resources (binaries, wheel, templates, manage_services.sh)
 in its own directory or specified subdirectories.
 
 Options:
-  -c, --config FILENAME Configuration filename (default: ${CONFIG_FILE_NAME_ARG}).
-                        Expected to be in the same directory as this script.
-  -n, --dry-run         Dry-run mode (print commands instead of executing).
-  -v, --verbose         Verbose mode (enables debug messages and command tracing 'set -x').
-  -h, --help            Show this help message and exit.
-  --version             Show script version and exit.
+  -c, --config FILENAME   Configuration filename (default: ${CONFIG_FILE_NAME_ARG}).
+                          Expected to be in the same directory as this script.
+  --operation-type MODE   (Internal) Sets context if called by orchestrator.
+                          MODE can be 'install' or 'update'. Affects logging.
+  -n, --dry-run           Dry-run mode (print commands instead of executing).
+  -v, --verbose           Verbose mode (enables debug messages and command tracing 'set -x').
+  -h, --help              Show this help message and exit.
+  --version               Show script version and exit.
 EOF
-  exit "${1:-$EXIT_CODE_SUCCESS}" # Exit 0 for help/version
+  exit "${1:-$EXIT_CODE_SUCCESS}"
 }
 
-# Pre-scan for help/version
 for arg_pre_scan in "$@"; do
   case "$arg_pre_scan" in
     --version) echo "$(basename "$0") v${VERSION_INSTALL_BASE}"; HELP_OR_VERSION_EXIT=true; exit "$EXIT_CODE_SUCCESS";;
@@ -136,48 +143,45 @@ while [[ $# -gt 0 ]]; do
     -c|--config)
       if [[ -z "${2:-}" || "${2}" == -* ]]; then error_exit "Option $1 requires a FILENAME argument." "$EXIT_CODE_USAGE_ERROR"; fi
       CONFIG_FILE_NAME_ARG="$2"; shift 2;;
+    --operation-type)
+      if [[ -z "${2:-}" || "${2}" == -* ]]; then error_exit "Option $1 requires a MODE ('install' or 'update')." "$EXIT_CODE_USAGE_ERROR"; fi
+      if [[ "$2" != "install" && "$2" != "update" ]]; then error_exit "Invalid mode for $1: '$2'. Must be 'install' or 'update'." "$EXIT_CODE_USAGE_ERROR"; fi
+      OPERATION_TYPE_CONTEXT="$2"; shift 2;;
     -n|--dry-run)
       DRY_RUN=true; shift;;
     -v|--verbose)
       VERBOSE_MODE=true; shift;;
     *)
-      TEMP_ARGS+=("$1"); shift;; # Collect unknown options
+      TEMP_ARGS+=("$1"); shift;;
   esac
 done
 
-# Handle unknown options
 if (( ${#TEMP_ARGS[@]} > 0 )); then
   error_exit "Unknown option or argument: ${TEMP_ARGS[0]}. Use --help for usage." "$EXIT_CODE_USAGE_ERROR"
 fi
 
-# Activate verbose tracing if enabled
 if [[ "$VERBOSE_MODE" == true ]]; then
   info "Verbose mode enabled (command tracing 'set -x' activated)."
   set -x
 fi
 
-# --- Root Execution Check ---
 if [[ "$(id -u)" -ne 0 ]]; then
   error_exit "This script must be run as root or with sudo." "$EXIT_CODE_PREREQUISITE_ERROR"
 fi
 
-# SCRIPT_DIR is the absolute path to the directory where this script resides.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 debug "Script directory determined as: $SCRIPT_DIR"
 
-# --- Resolve and Load Configuration ---
 CONFIG_FILE_PATH="${SCRIPT_DIR}/${CONFIG_FILE_NAME_ARG}"
-debug "Attempting to load configuration from '$CONFIG_FILE_PATH' (resolved from filename '$CONFIG_FILE_NAME_ARG' in SCRIPT_DIR)."
+debug "Attempting to load configuration from '$CONFIG_FILE_PATH'..."
 if [[ -f "$CONFIG_FILE_PATH" ]]; then
-  # shellcheck source=/dev/null
   source "$CONFIG_FILE_PATH"
   debug "Configuration loaded successfully from '$CONFIG_FILE_PATH'."
 else
-  error_exit "Configuration file not found at the expected location: '$CONFIG_FILE_PATH'. Ensure '$CONFIG_FILE_NAME_ARG' exists in '$SCRIPT_DIR'." "$EXIT_CODE_CONFIG_ERROR"
+  error_exit "Configuration file not found: '$CONFIG_FILE_PATH'." "$EXIT_CODE_CONFIG_ERROR"
 fi
 
-# --- Validate Mandatory Configuration Variables ---
 debug "Validating mandatory configuration variables from '$CONFIG_FILE_PATH'..."
 : "${VERSIONED_APP_BINARY_FILENAME:?VERSIONED_APP_BINARY_FILENAME must be defined in $CONFIG_FILE_PATH}" "$EXIT_CODE_CONFIG_ERROR"
 : "${VERSIONED_DATAMOVER_WHEEL_FILENAME:?VERSIONED_DATAMOVER_WHEEL_FILENAME must be defined in $CONFIG_FILE_PATH}" "$EXIT_CODE_CONFIG_ERROR"
@@ -185,18 +189,16 @@ debug "Validating mandatory configuration variables from '$CONFIG_FILE_PATH'..."
 : "${EXPORT_TIMEOUT_CONFIG:?EXPORT_TIMEOUT_CONFIG must be defined in $CONFIG_FILE_PATH}" "$EXIT_CODE_CONFIG_ERROR"
 
 if ! [[ "$REMOTE_HOST_URL_CONFIG" =~ ^https?:// ]]; then
-  error_exit "REMOTE_HOST_URL_CONFIG ('$REMOTE_HOST_URL_CONFIG') in '$CONFIG_FILE_PATH' must start with http:// or https://" "$EXIT_CODE_CONFIG_ERROR"
+  error_exit "REMOTE_HOST_URL_CONFIG ('$REMOTE_HOST_URL_CONFIG') must start with http:// or https://" "$EXIT_CODE_CONFIG_ERROR"
 fi
 if ! [[ "$EXPORT_TIMEOUT_CONFIG" =~ ^[0-9]+$ ]]; then
-  error_exit "EXPORT_TIMEOUT_CONFIG ('$EXPORT_TIMEOUT_CONFIG') in '$CONFIG_FILE_PATH' must be a non-negative integer." "$EXIT_CODE_CONFIG_ERROR"
+  error_exit "EXPORT_TIMEOUT_CONFIG ('$EXPORT_TIMEOUT_CONFIG') must be a non-negative integer." "$EXIT_CODE_CONFIG_ERROR"
 fi
 debug "Mandatory configuration variables validated."
 
-# --- Derived Readonly Variables (No change in logic) ---
 readonly APP_USER="${USER_CONFIG:-${APP_NAME}_user}"
 readonly APP_GROUP="${GROUP_CONFIG:-${APP_NAME}_group}"
 readonly BASE_DIR="${BASE_DIR_CONFIG:-/opt/${APP_NAME}}"
-# ... (rest of derived variables are the same, ensure they use $APP_NAME, $SCRIPT_DIR, $BASE_DIR correctly)
 readonly ETC_DIR="/etc/${APP_NAME}"
 readonly SYSTEMD_DIR="/etc/systemd/system"
 readonly PYTHON_VENV_DIR_NAME="${PYTHON_VENV_DIR_NAME:-datamover_venv}"
@@ -223,8 +225,6 @@ readonly REMOTE_HOST_URL="${REMOTE_HOST_URL_CONFIG}"
 readonly SOURCE_VERSIONED_APP_BINARY_FILE_PATH="${SCRIPT_DIR}/${VERSIONED_APP_BINARY_FILENAME}"
 readonly SOURCE_VERSIONED_WHEEL_FILE_PATH="${SCRIPT_DIR}/${VERSIONED_DATAMOVER_WHEEL_FILENAME}"
 
-
-# --- Pre-flight Checks (No change in logic, just uses error_exit) ---
 debug "Running pre-flight checks..."
 [[ -f "$SOURCE_VERSIONED_APP_BINARY_FILE_PATH" ]] || error_exit "App binary not found: $SOURCE_VERSIONED_APP_BINARY_FILE_PATH" "$EXIT_CODE_CONFIG_ERROR"
 [[ -f "$SOURCE_VERSIONED_WHEEL_FILE_PATH" ]]   || error_exit "Datamover wheel not found: $SOURCE_VERSIONED_WHEEL_FILE_PATH" "$EXIT_CODE_CONFIG_ERROR"
@@ -241,14 +241,16 @@ for cmd in "${required_commands[@]}"; do
 done
 debug "Pre-flight checks passed."
 
-# --- Helper Functions (Adapted to use new 'run' helper) ---
 create_group_if_not_exists() {
   local group_name="$1"
   if getent group "$group_name" &>/dev/null; then
     debug "Group '$group_name' already exists."
   else
     debug "Creating system group '$group_name'..."
-    run groupadd -r "$group_name" || error_exit "Failed to create group '$group_name'." "$EXIT_CODE_FILE_ERROR"
+    if ! run groupadd -r "$group_name"; then
+        error_exit "CRITICAL FAILURE: Could not create system group '$group_name'. Check permissions and if 'groupadd' is functional." "$EXIT_CODE_FILE_ERROR"
+    fi
+    info "System group '$group_name' created successfully."
   fi
 }
 
@@ -258,24 +260,30 @@ create_user_if_not_exists() {
     debug "User '$username' already exists."
   else
     debug "Creating system user '$username' (group: '$primary_group', home: '$home_dir')..."
-    run useradd -r -g "$primary_group" -d "$home_dir" -s /sbin/nologin "$username" \
-      || error_exit "Failed to create user '$username'." "$EXIT_CODE_FILE_ERROR"
+    if ! getent group "$primary_group" &>/dev/null; then
+        warn "Primary group '$primary_group' for user '$username' does not appear to exist. User creation may fail or behave unexpectedly."
+    fi
+    if ! run useradd -r -g "$primary_group" -d "$home_dir" -s /sbin/nologin -c "${APP_NAME} service account" "$username"; then
+        error_exit "CRITICAL FAILURE: Could not create system user '$username'. Check permissions, if 'useradd' is functional, and if group '$primary_group' exists." "$EXIT_CODE_FILE_ERROR"
+    fi
+    info "System user '$username' created successfully."
   fi
 }
 
 ensure_directory() {
   local dir_path="$1"; local owner="$2"; local group="$3"; local perms="$4"
   debug "Ensuring directory '$dir_path' (Owner: $owner, Group: $group, Perms: $perms)..."
-  run mkdir -p "$dir_path" || error_exit "Failed to create dir '$dir_path'." "$EXIT_CODE_FILE_ERROR"
-  run chown "$owner:$group" "$dir_path" || error_exit "Failed to chown dir '$dir_path'." "$EXIT_CODE_FILE_ERROR"
-  run chmod "$perms" "$dir_path" || error_exit "Failed to chmod dir '$dir_path'." "$EXIT_CODE_FILE_ERROR"
+  if ! run mkdir -p "$dir_path"; then error_exit "Failed to create dir '$dir_path'." "$EXIT_CODE_FILE_ERROR"; fi
+  if ! run chown "$owner:$group" "$dir_path"; then error_exit "Failed to chown dir '$dir_path'." "$EXIT_CODE_FILE_ERROR"; fi
+  if ! run chmod "$perms" "$dir_path"; then error_exit "Failed to chmod dir '$dir_path'." "$EXIT_CODE_FILE_ERROR"; fi
 }
 
 install_file_to_dest() {
   local src_file="$1"; local dest_file="$2"; local owner="$3"; local group="$4"; local perms="$5"
   debug "Installing file '$src_file' to '$dest_file' (Owner: $owner, Group: $group, Perms: $perms)..."
-  run install -T -o "$owner" -g "$group" -m "$perms" "$src_file" "$dest_file" \
-    || error_exit "Failed to install file '$src_file' to '$dest_file'." "$EXIT_CODE_FILE_ERROR"
+  if ! run install -T -o "$owner" -g "$group" -m "$perms" "$src_file" "$dest_file"; then
+    error_exit "Failed to install file '$src_file' to '$dest_file'." "$EXIT_CODE_FILE_ERROR"
+  fi
 }
 
 setup_python_venv() {
@@ -283,21 +291,26 @@ setup_python_venv() {
   ensure_directory "$(dirname "$venv_path")" "$venv_owner" "$venv_group" "0755"
   local pip_executable="${venv_path}/bin/pip"
   local pip_opts=()
-  # For pip, -q is added directly if not verbose and not dry_run, not via the run helper's dry run.
   if [[ "$VERBOSE_MODE" != true && "$DRY_RUN" != true ]]; then pip_opts+=("-q"); fi
 
-  if [[ -f "$pip_executable" ]]; then
+  if [[ -f "$pip_executable" && "$DRY_RUN" != true ]]; then
     debug "Python venv likely exists at '$venv_path'."
-  else
-    debug "Creating Python venv at '$venv_path'..."
-    run python3 -m venv "$venv_path" || error_exit "Failed to create Python venv." "$EXIT_CODE_ACTION_FAILED"
+  elif [[ "$DRY_RUN" == true ]]; then
+    info "[DRY-RUN] Would check for Python venv at '$venv_path' and create if not found."
   fi
-  debug "Upgrading pip and installing/upgrading wheel '$wheel_to_install' into '$venv_path'..."
-  run "$pip_executable" install "${pip_opts[@]}" --upgrade pip || error_exit "Failed to upgrade pip." "$EXIT_CODE_ACTION_FAILED"
-  run "$pip_executable" install "${pip_opts[@]}" --upgrade "$wheel_to_install" || error_exit "Failed to install/upgrade wheel." "$EXIT_CODE_ACTION_FAILED"
 
-  if [[ "$DRY_RUN" != true ]]; then # Direct chown, not via run, as run doesn't fit recursive chown well for display
-    chown -R "$venv_owner:$venv_group" "$venv_path" || error_exit "Failed to set venv ownership." "$EXIT_CODE_FILE_ERROR"
+  if [[ "$DRY_RUN" == true || ! -f "$pip_executable" ]]; then
+      debug "Creating Python venv at '$venv_path' (or simulating for dry_run)..."
+      if ! run python3 -m venv "$venv_path"; then error_exit "Failed to create Python venv." "$EXIT_CODE_ACTION_FAILED"; fi
+  fi
+
+  debug "Upgrading pip and installing/upgrading wheel '$wheel_to_install' into '$venv_path'..."
+  if ! run "$pip_executable" install "${pip_opts[@]}" --upgrade pip; then error_exit "Failed to upgrade pip." "$EXIT_CODE_ACTION_FAILED"; fi
+  if ! run "$pip_executable" install "${pip_opts[@]}" --upgrade "$wheel_to_install"; then error_exit "Failed to install/upgrade wheel." "$EXIT_CODE_ACTION_FAILED"; fi
+
+  if [[ "$DRY_RUN" != true ]]; then
+    info "Setting venv ownership for '$venv_path' to '$venv_owner:$venv_group'..."
+    chown -R "$venv_owner:$venv_group" "$venv_path" || error_exit "Failed to set venv ownership on '$venv_path'." "$EXIT_CODE_FILE_ERROR"
   else
     info "[DRY-RUN] Would execute: chown -R \"$venv_owner:$venv_group\" \"$venv_path\""
   fi
@@ -307,47 +320,50 @@ setup_python_venv() {
 deploy_wrapper_script() {
   debug "Deploying wrapper script '$INSTALLED_WRAPPER_SCRIPT_NAME' to '$INSTALLED_WRAPPER_SCRIPT_PATH'"
   local temp_wrapper_file
-  temp_wrapper_file=$(mktemp "/tmp/${INSTALLED_WRAPPER_SCRIPT_NAME}.tmp.XXXXXX")
-  # Defer cleanup of temp_wrapper_file using a local trap or by adding to a global list if many such files.
-  # For a single file, direct rm after use is also fine.
-  # trap 'rm -f "$temp_wrapper_file"' RETURN # Bash 3.2+ for local trap on function return
+  if [[ "$DRY_RUN" == true ]]; then
+      temp_wrapper_file="${SCRIPT_DIR}/${INSTALLED_WRAPPER_SCRIPT_NAME}.tmp.DRYRUN"
+      info "[DRY-RUN] Would use temporary wrapper file: $temp_wrapper_file"
+      touch "$temp_wrapper_file" || warn "[DRY-RUN] Failed to touch placeholder '$temp_wrapper_file'."
+  else
+      temp_wrapper_file=$(mktemp "/tmp/${INSTALLED_WRAPPER_SCRIPT_NAME}.tmp.XXXXXX")
+  fi
+  trap 'rm -f '"$temp_wrapper_file"' &>/dev/null' RETURN
 
-  # Build sed command parts
   local sed_expr_app_name="s|{{APP_NAME}}|${APP_NAME}|g"
   local sed_expr_app_user="s|{{APP_USER}}|${APP_USER}|g"
-  # ... add all other sed expressions ...
   local sed_expr_base_dir="s|{{BASE_DIR}}|${BASE_DIR}|g"
   local sed_expr_etc_dir="s|{{ETC_DIR}}|${ETC_DIR}|g"
   local sed_expr_symlink_exec="s|{{SYMLINK_EXECUTABLE_PATH}}|${SYMLINK_EXECUTABLE_PATH}|g"
   local sed_expr_source_data="s|{{SOURCE_DATA_DIR}}|${SOURCE_DATA_DIR}|g"
   local sed_expr_csv_data="s|{{CSV_DATA_DIR}}|${CSV_DATA_DIR}|g"
 
-  run sed \
-    -e "$sed_expr_app_name" \
-    -e "$sed_expr_app_user" \
-    -e "$sed_expr_base_dir" \
-    -e "$sed_expr_etc_dir" \
-    -e "$sed_expr_symlink_exec" \
-    -e "$sed_expr_source_data" \
-    -e "$sed_expr_csv_data" \
-    "$WRAPPER_TEMPLATE_PATH" > "$temp_wrapper_file" \
-    || error_exit "Failed to process wrapper script template '$WRAPPER_TEMPLATE_PATH'." "$EXIT_CODE_FILE_ERROR"
+  if [[ "$DRY_RUN" == true ]]; then
+    info "[DRY-RUN] Would process wrapper template '$WRAPPER_TEMPLATE_PATH' into '$temp_wrapper_file' using sed with expressions."
+    # Could log all expressions if needed for deep debug, but usually type of action is enough.
+  else
+    sed \
+      -e "$sed_expr_app_name" \
+      -e "$sed_expr_app_user" \
+      -e "$sed_expr_base_dir" \
+      -e "$sed_expr_etc_dir" \
+      -e "$sed_expr_symlink_exec" \
+      -e "$sed_expr_source_data" \
+      -e "$sed_expr_csv_data" \
+      "$WRAPPER_TEMPLATE_PATH" > "$temp_wrapper_file" \
+      || error_exit "Failed to process wrapper script template '$WRAPPER_TEMPLATE_PATH'." "$EXIT_CODE_FILE_ERROR"
+  fi
 
-  run install -T -o "${APP_USER}" -g "${APP_GROUP}" -m 0750 "$temp_wrapper_file" "$INSTALLED_WRAPPER_SCRIPT_PATH" \
-    || error_exit "Failed to install processed wrapper script to '$INSTALLED_WRAPPER_SCRIPT_PATH'." "$EXIT_CODE_FILE_ERROR"
-  rm -f "$temp_wrapper_file" # Clean up temp file
-
+  install_file_to_dest "$temp_wrapper_file" "$INSTALLED_WRAPPER_SCRIPT_PATH" "$APP_USER" "$APP_GROUP" "0750"
   debug "Wrapper script deployed."
 }
 
 deploy_systemd_units() {
   debug "Deploying systemd units to '$SYSTEMD_DIR'"
   ensure_directory "$SYSTEMD_DIR" "root" "root" "0755"
-  # Build array of sed expressions
+
   local sed_expressions_systemd=(
     -e "s|{{APP_NAME}}|${APP_NAME}|g"
     -e "s|{{APP_USER}}|${APP_USER}|g"
-    # ... add all other sed expressions from original script ...
     -e "s|{{APP_GROUP}}|${APP_GROUP}|g"
     -e "s|{{BASE_DIR}}|${BASE_DIR}|g"
     -e "s|{{ETC_DIR}}|${ETC_DIR}|g"
@@ -366,25 +382,39 @@ deploy_systemd_units() {
   for template_file in "${systemd_template_files[@]}"; do
     local unit_name; unit_name=$(basename "${template_file%.template}")
     local output_file="${SYSTEMD_DIR}/${unit_name}"
-    local temp_unit_file; temp_unit_file=$(mktemp "/tmp/${unit_name}.tmp.XXXXXX")
+    local temp_unit_file # Variable for this loop iteration
+
+    if [[ "$DRY_RUN" == true ]]; then
+        temp_unit_file="${SCRIPT_DIR}/${unit_name}.tmp.DRYRUN"
+        info "[DRY-RUN] Would use temporary systemd unit file: $temp_unit_file"
+        touch "$temp_unit_file" || warn "[DRY-RUN] Failed to touch placeholder '$temp_unit_file'."
+        info "[DRY-RUN] Would process systemd template '$template_file' into '$temp_unit_file'."
+    else
+        temp_unit_file=$(mktemp "/tmp/${unit_name}.tmp.XXXXXX")
+    fi
+    # This trap is for the CURRENT $temp_unit_file in this loop iteration.
+    # It will be redefined in the next iteration for the next temp_unit_file.
+    trap 'rm -f "$temp_unit_file" &>/dev/null' RETURN # <<< THIS LINE MUST USE $temp_unit_file
+
     debug "  Processing systemd template '$template_file' -> '$output_file' (via '$temp_unit_file')"
 
-    run sed "${sed_expressions_systemd[@]}" "$template_file" > "$temp_unit_file" \
-      || error_exit "Failed to process systemd template '$template_file'." "$EXIT_CODE_FILE_ERROR"
+    if [[ "$DRY_RUN" != true ]]; then
+      sed "${sed_expressions_systemd[@]}" "$template_file" > "$temp_unit_file" \
+        || error_exit "Failed to process systemd template '$template_file'." "$EXIT_CODE_FILE_ERROR"
+    fi
 
-    run install -T -o root -g root -m 0644 "$temp_unit_file" "$output_file" \
-      || error_exit "Failed to install processed systemd unit to '$output_file'." "$EXIT_CODE_FILE_ERROR"
-    rm -f "$temp_unit_file"
+    install_file_to_dest "$temp_unit_file" "$output_file" "root" "root" "0644"
+    # rm -f "$temp_unit_file" is handled by the trap set above for this iteration on RETURN
   done
+  # Clear any lingering per-iteration trap by setting a general one or unsetting
+  trap - RETURN # Or set to a general cleanup if needed outside the loop
+
   debug "Reloading systemd daemon..."
-  run systemctl daemon-reload || error_exit "Failed to reload systemd daemon." "$EXIT_CODE_ACTION_FAILED"
+  if ! run systemctl daemon-reload; then error_exit "Failed to reload systemd daemon." "$EXIT_CODE_ACTION_FAILED"; fi
   debug "Systemd units deployed."
 }
 
 deploy_application_configs() {
-  # ... (logic for finding common_configs_to_deploy is same) ...
-  # ... (loop for install_file_to_dest is same) ...
-  # For bitmover_template_path:
   debug "Deploying application configurations to '$ETC_DIR'"
   ensure_directory "$ETC_DIR" "root" "root" "0755"
   shopt -s nullglob
@@ -408,32 +438,42 @@ deploy_application_configs() {
   if [[ -f "$bitmover_template_path" ]]; then
     debug "Deploying Bitmover config from template '$bitmover_template_path' to '$BITMOVER_CONFIG_FILE'..."
     ensure_directory "$BITMOVER_LOG_DIR" "$APP_USER" "$APP_GROUP" "0770"
-    local temp_bitmover_cfg; temp_bitmover_cfg=$(mktemp "/tmp/bitmover_cfg.tmp.XXXXXX")
+    local temp_bitmover_cfg
+
+    if [[ "$DRY_RUN" == true ]]; then
+        temp_bitmover_cfg="${SCRIPT_DIR}/config.ini.tmp.DRYRUN"
+        info "[DRY-RUN] Would use temporary bitmover config file: $temp_bitmover_cfg"
+        touch "$temp_bitmover_cfg" || warn "[DRY-RUN] Failed to touch placeholder '$temp_bitmover_cfg'."
+        info "[DRY-RUN] Would process bitmover template '$bitmover_template_path' into '$temp_bitmover_cfg'."
+    else
+        temp_bitmover_cfg=$(mktemp "/tmp/bitmover_cfg.tmp.XXXXXX")
+    fi
+    trap 'rm -f '"$temp_bitmover_cfg"' &>/dev/null' RETURN
 
     local sed_expr_base_dir_bm="s|{{BASE_DIR}}|${BASE_DIR}|g"
     local sed_expr_log_dir_bm="s|{{BITMOVER_LOG_DIR}}|${BITMOVER_LOG_DIR}|g"
     local sed_expr_remote_url_bm="s#{{REMOTE_HOST_URL}}#${REMOTE_HOST_URL}#g"
 
-    run sed \
-      -e "$sed_expr_base_dir_bm" \
-      -e "$sed_expr_log_dir_bm" \
-      -e "$sed_expr_remote_url_bm" \
-      "$bitmover_template_path" > "$temp_bitmover_cfg" \
-      || error_exit "Failed to generate '$BITMOVER_CONFIG_FILE' from template." "$EXIT_CODE_FILE_ERROR"
+    if [[ "$DRY_RUN" != true ]]; then
+      sed \
+        -e "$sed_expr_base_dir_bm" \
+        -e "$sed_expr_log_dir_bm" \
+        -e "$sed_expr_remote_url_bm" \
+        "$bitmover_template_path" > "$temp_bitmover_cfg" \
+        || error_exit "Failed to generate '$BITMOVER_CONFIG_FILE' from template." "$EXIT_CODE_FILE_ERROR"
+    fi
 
-    run install -T -o "$APP_USER" -g "$APP_GROUP" -m 0640 "$temp_bitmover_cfg" "$BITMOVER_CONFIG_FILE" \
-        || error_exit "Failed to install processed bitmover config to '$BITMOVER_CONFIG_FILE'." "$EXIT_CODE_FILE_ERROR"
-    rm -f "$temp_bitmover_cfg"
+    install_file_to_dest "$temp_bitmover_cfg" "$BITMOVER_CONFIG_FILE" "$APP_USER" "$APP_GROUP" "0640"
     debug "Bitmover config deployed."
   else
-    warn "Bitmover config template 'config.ini.template' not found. Skipping its deployment."
+    warn "Bitmover config template 'config.ini.template' not found in '$COMMON_CFG_DIR'. Skipping its deployment."
   fi
   debug "Application configurations deployment finished."
 }
 
 save_environment_variables_file() {
   debug "Saving base environment variables to '$BASE_VARS_FILE'"
-  local file_content # ... (file_content generation same) ...
+  local file_content
   file_content=$(cat <<EOF
 export APP_NAME="${APP_NAME}"
 export APP_USER="${APP_USER}"
@@ -460,13 +500,12 @@ EOF
 
   if [[ "$DRY_RUN" == true ]]; then
     info "[DRY-RUN] Would ensure directory $(dirname "$BASE_VARS_FILE")"
-    info "[DRY-RUN] Would write the following content to '$BASE_VARS_FILE':"
-    echo "${file_content}" # Show content directly
+    info "[DRY-RUN] Would write content to '$BASE_VARS_FILE' (content omitted from log for brevity if long, see debug for full if needed)."
+    debug "[DRY-RUN] Content for $BASE_VARS_FILE:\n$file_content"
     info "[DRY-RUN] Would chmod 0644 \"$BASE_VARS_FILE\""
   else
-    ensure_directory "$(dirname "$BASE_VARS_FILE")" "root" "root" "0755" # ensure_directory uses 'run'
+    ensure_directory "$(dirname "$BASE_VARS_FILE")" "root" "root" "0755"
     printf "%s\n" "$file_content" > "$BASE_VARS_FILE" || error_exit "Failed to write to '$BASE_VARS_FILE'" "$EXIT_CODE_FILE_ERROR"
-    # chmod is direct here as it's after a direct write, not through 'run' for the printf part
     chmod 0644 "$BASE_VARS_FILE" || error_exit "Failed to set permissions on '$BASE_VARS_FILE'" "$EXIT_CODE_FILE_ERROR"
   fi
   debug "Base environment variables file processed."
@@ -483,31 +522,43 @@ install_management_script_and_symlink() {
 
   debug "Starting installation of management script and symlink."
   if [[ ! -f "$source_manage_services_path" ]]; then
-    warn "Source management script '$source_manage_services_path' not found. Skipping."
+    warn "Source management script '$source_manage_services_path' not found. Skipping its installation."
     return 0
   fi
+
   ensure_directory "$app_bin_dir" "root" "$APP_GROUP" "0755"
   install_file_to_dest "$source_manage_services_path" "$installed_manage_services_path" "root" "$APP_GROUP" "0755"
+
   debug "Attempting to create symlink: '${symlink_full_path}' -> '${installed_manage_services_path}'."
   if [[ "$DRY_RUN" == true ]]; then
-    info "[DRY-RUN] Would mkdir -p \"$symlink_standard_dir\""
-    info "[DRY-RUN] Would ln -snf \"$installed_manage_services_path\" \"$symlink_full_path\""
+    info "[DRY-RUN] Would ensure directory \"$symlink_standard_dir\" exists."
+    info "[DRY-RUN] Would execute: ln -snf \"$installed_manage_services_path\" \"$symlink_full_path\""
   else
-    mkdir -p "$symlink_standard_dir" || { warn "Failed to ensure dir '$symlink_standard_dir'. Skipping symlink."; return 0; }
+    mkdir -p "$symlink_standard_dir" || {
+        warn "Failed to ensure standard symlink directory '$symlink_standard_dir' exists. Skipping symlink creation for '${symlink_command_name}'.";
+        ((FAIL_COUNT++)) # Count as a non-fatal error
+        return 0;
+    }
     if ln -snf "$installed_manage_services_path" "$symlink_full_path"; then
       info "Symlink created: ${symlink_full_path} -> ${installed_manage_services_path}"
-      info "Command '${symlink_command_name}' should be available."
+      info "Command '${symlink_command_name}' should be available in PATH."
     else
-      warn "Failed to create symlink '$symlink_full_path'. Available at '$installed_manage_services_path'."
+      warn "Failed to create symlink '$symlink_full_path'. Management script is available at '$installed_manage_services_path'."
+      ((FAIL_COUNT++))
     fi
   fi
-  debug "Management script and symlink processed."
+  debug "Management script and symlink processing complete."
 }
 
 # --- Main ---
 main() {
-  info "Starting installation/update of '${APP_NAME}' application suite (v${VERSION_INSTALL_BASE})..."
-  # DRY_RUN/VERBOSE_MODE info messages handled by argument parsing section
+  local main_action_verb="Installation/Update" # Default for standalone or unknown
+  if [[ "$OPERATION_TYPE_CONTEXT" == "install" ]]; then
+    main_action_verb="Installation"
+  elif [[ "$OPERATION_TYPE_CONTEXT" == "update" ]]; then
+    main_action_verb="Update"
+  fi
+  info "Starting ${main_action_verb,,} of '${APP_NAME}' application suite (v${VERSION_INSTALL_BASE})..." # Lowercase verb
 
   create_group_if_not_exists "$APP_GROUP"
   create_user_if_not_exists "$APP_USER" "$APP_GROUP" "$BASE_DIR"
@@ -526,15 +577,21 @@ main() {
 
   debug "Creating/updating symlink '$SYMLINK_EXECUTABLE_PATH' -> '$VERSIONED_APP_BINARY_FILENAME'"
   if [[ "$DRY_RUN" == true ]]; then
-    info "[DRY-RUN] Would pushd to \"${BASE_DIR}/bin\""
-    info "[DRY-RUN] Would ln -snf \"$VERSIONED_APP_BINARY_FILENAME\" \"$APP_NAME\""
-    info "[DRY-RUN] Would popd"
+    info "[DRY-RUN] Would change to directory \"${BASE_DIR}/bin\""
+    info "[DRY-RUN] Would execute: ln -snf \"$VERSIONED_APP_BINARY_FILENAME\" \"$APP_NAME\""
+    info "[DRY-RUN] Would change back to original directory"
   else
-    pushd "${BASE_DIR}/bin" >/dev/null || error_exit "Failed to pushd to ${BASE_DIR}/bin" "$EXIT_CODE_FILE_ERROR"
-    ln -snf "$VERSIONED_APP_BINARY_FILENAME" "$APP_NAME" || error_exit "Failed to create symlink for $APP_NAME" "$EXIT_CODE_FILE_ERROR"
-    popd >/dev/null || error_exit "Failed to popd from ${BASE_DIR}/bin" "$EXIT_CODE_FILE_ERROR"
+    current_dir_before_pushd=$(pwd)
+    if ! pushd "${BASE_DIR}/bin" >/dev/null; then error_exit "Failed to change directory to ${BASE_DIR}/bin" "$EXIT_CODE_FILE_ERROR"; fi
+    if ! ln -snf "$VERSIONED_APP_BINARY_FILENAME" "$APP_NAME"; then
+        # popd before error_exit to restore directory
+        popd >/dev/null || warn "Failed to popd from ${BASE_DIR}/bin after symlink failure." # Log popd failure but proceed to error_exit
+        error_exit "Failed to create symlink for $APP_NAME in ${BASE_DIR}/bin" "$EXIT_CODE_FILE_ERROR"
+    fi
+    if ! popd >/dev/null; then error_exit "Failed to popd from ${BASE_DIR}/bin" "$EXIT_CODE_FILE_ERROR"; fi
+    debug "Returned to directory: $(pwd) (was: $current_dir_before_pushd)"
   fi
-  debug "Symlink processed."
+  debug "Application binary symlink processed."
 
   deploy_wrapper_script
   setup_python_venv "$PYTHON_VENV_PATH" "$SOURCE_VERSIONED_WHEEL_FILE_PATH" "$APP_USER" "$APP_GROUP"
@@ -543,27 +600,29 @@ main() {
   save_environment_variables_file
   install_management_script_and_symlink
 
-  info "Installation/update of '${APP_NAME}' application suite processing complete."
+  info "${main_action_verb^} of '${APP_NAME}' application suite processing complete." # Capitalize first letter of verb
   info "  Main binary: '$VERSIONED_APP_BINARY_FILENAME' -> '$DEST_VERSIONED_APP_BINARY_PATH' (linked via '$SYMLINK_EXECUTABLE_PATH')"
   info "  Wrapper script for instances: '$INSTALLED_WRAPPER_SCRIPT_PATH'"
   info "  Datamover wheel: '$VERSIONED_DATAMOVER_WHEEL_FILENAME' in '$PYTHON_VENV_PATH'"
-  info "  Management script: '${BASE_DIR}/bin/manage_services.sh' (symlinked as 'exportcli-manage' in /usr/local/bin if successful)"
+  info "  Management script: '${BASE_DIR}/bin/manage_services.sh' (symlinked as 'exportcli-manage' in /usr/local/bin if symlink was successful)"
   info "  Default instance EXPORT_TIMEOUT (from $CONFIG_FILE_NAME_ARG): '${EXPORT_TIMEOUT_CONFIG}' seconds (stored in '$BASE_VARS_FILE')"
 
-  if [[ "$DRY_RUN" != true ]]; then # Corrected DRY_RUN check
-    info "To apply changes, services might need to be (re)started if not handled by an orchestrator."
-    info "Use the 'exportcli-manage' command (if symlink creation was successful) or '${BASE_DIR}/bin/manage_services.sh'."
-    info "For example:"
-    info "  sudo exportcli-manage --restart                            # To restart the main bitmover service"
-    info "  sudo exportcli-manage -i your_instance_name --restart      # To restart a specific application instance"
-    info "Alternatively, use the full path:"
-    info "  sudo ${BASE_DIR}/bin/manage_services.sh --restart"
-
+  if [[ "$DRY_RUN" != true ]]; then
+    # Only show restart advice if not an 'install' operation called by orchestrator,
+    # or if run standalone (OPERATION_TYPE_CONTEXT is empty).
+    if [[ "$OPERATION_TYPE_CONTEXT" == "update" || -z "$OPERATION_TYPE_CONTEXT" ]]; then
+      info "To apply changes, services might need to be (re)started."
+      info "Use the 'exportcli-manage' command (if symlink creation was successful) or the full path:"
+      info "  '${BASE_DIR}/bin/manage_services.sh'"
+      info "For example:"
+      info "  sudo exportcli-manage --restart                            # To restart the main bitmover service"
+      info "  sudo exportcli-manage -i your_instance_name --restart      # To restart a specific application instance"
+    elif [[ "$OPERATION_TYPE_CONTEXT" == "install" ]]; then
+      debug "Restart advice suppressed: Orchestrator handles initial start/enable during an install."
+    fi
   fi
-  # No "DRY RUN MODE was enabled" message here, as it's part of the initial info if set.
-  SCRIPT_SUCCESSFUL=true # Mark as successful at the end of main operations
+  SCRIPT_SUCCESSFUL=true
 }
 
 # --- Execute Main ---
 main "$@"
-# Final exit code determined by SCRIPT_SUCCESSFUL and FAIL_COUNT handled by EXIT trap's call to _final_summary_message
