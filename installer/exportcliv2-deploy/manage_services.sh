@@ -341,10 +341,27 @@ case "$ACTION_FLAG" in
     for unit in "${PATH_SERVICE_UNITS[@]}"; do run systemctl stop "$unit"; done
     ;;
   restart)
+    info "Attempting to restart $TARGET_DESC." # TARGET_DESC is already set in the script
+    info "This operation involves stopping and then starting the service(s)."
+    info "If a service is slow to stop, this command may appear to hang for its configured timeout (e.g., up to 90 seconds or more). Please wait for completion..."
+
     run systemctl restart "$MAIN_SERVICE_UNIT"
+
+    # If 'run systemctl restart' returns successfully (i.e., systemctl itself didn't report an immediate error
+    # and the ERR trap wasn't triggered), it means systemd has completed the restart sequence
+    # (waited for stop, then waited for start).
+    # The overall script success/failure will be handled by the EXIT trap.
+    # We can add a small confirmation that the command was processed by systemd.
+
+    # This check is a bit tricky because $? after the `if` block below would be from the `if`.
+    # For now, let's rely on the main script EXIT trap for the final "success" message.
+    # The crucial part is the warning message above.
+
     if ((${#PATH_SERVICE_UNITS[@]} > 0)); then
-      info "Note: Associated path unit(s) (${PATH_SERVICE_UNITS[*]}) are event-driven and not directly restarted."
+      info "Note: Associated path unit(s) (${PATH_SERVICE_UNITS[*]}) are event-driven and not directly restarted with this command."
     fi
+    # No specific "restart action succeeded" message here; the main script's EXIT trap covers it.
+    # If 'run systemctl restart' failed critically, the ERR trap would have already fired.
     ;;
   status)
     SCRIPT_SUCCESSFUL=true # Status is informational; success if command runs and reports.

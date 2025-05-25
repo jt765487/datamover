@@ -1,8 +1,8 @@
 ## Quick Start Guide: Basic `exportcliv2` and `bitmover` Setup ##
 
-This guide walks you through the minimal steps to get a basic `exportcliv2` environment (with default instances) and the `bitmover` service up and running using the provided deployment scripts.
+This guide walks you through the minimal steps to get a basic `exportcliv2` environment and the `bitmover` service up and running using the provided deployment scripts.
 
-**Goal:** Install the application suite, configure one `exportcliv2` instance ("AAA"), and verify all relevant services are operational.
+**Goal:** Install the application suite, configure one `exportcliv2` instance (named "AAA"), and verify all relevant services are operational.
 
 **Prerequisites:**
 
@@ -34,6 +34,11 @@ The `install-app.conf` file, located in the `exportcliv2-deploy/` subdirectory, 
     nano exportcliv2-deploy/install-app.conf
     ```
 2.  **Verify and/or Set the following MANDATORY variables:**
+    *   `DEFAULT_INSTANCES_CONFIG`: **You must set this.** For this quick start, define the instance "AAA":
+        ```
+        DEFAULT_INSTANCES_CONFIG="AAA"
+        ```
+        *(If you wanted multiple default instances, you'd list them space-separated, e.g., `"AAA BBB CCC"`).*
     *   `VERSIONED_APP_BINARY_FILENAME`: Ensure this matches the `exportcliv2` binary filename present in the `exportcliv2-deploy/` directory (e.g., `"exportcliv2-v0.4.0-B1771-24.11.15"`).
     *   `VERSIONED_DATAMOVER_WHEEL_FILENAME`: Ensure this matches the `datamover` Python wheel filename present in the `exportcliv2-deploy/` directory (e.g., `"datamover-0.1.0-py3-none-any.whl"`).
     *   `REMOTE_HOST_URL_CONFIG`: **You must set this** to the URL where `bitmover` should send data (e.g., `"http://your-ingest-server:8989/pcap"`).
@@ -43,26 +48,27 @@ The `install-app.conf` file, located in the `exportcliv2-deploy/` subdirectory, 
 
 **Step 3: Run the Orchestrator for Installation**
 
-From the `exportcliv2-suite-vX.Y.Z/` directory, execute the main deployment script with the `--install` flag. This will use the default instances (e.g., "AAA", "BBB", "CCC") defined in the Orchestrator script.
+From the `exportcliv2-suite-vX.Y.Z/` directory, execute the main deployment script with the `--install` flag. This will install and configure the instances defined in `DEFAULT_INSTANCES_CONFIG` from `install-app.conf` (i.e., "AAA" based on our setting in Step 2).
 ```bash
 sudo ./deploy_orchestrator.sh --install
 ```
-*(If re-running on an already installed system, you might need `sudo ./deploy_orchestrator.sh --install --force` to overwrite existing instance configurations.)*
+*(If re-running on an already installed system where instance "AAA" was previously configured, you might need `sudo ./deploy_orchestrator.sh --install --force` to overwrite its existing configuration files.)*
 
 The script will:
 1.  Check dependencies and acquire a lock.
 2.  Ask for confirmation (if in an interactive terminal):
     ```
-    Proceed with install for instances: (AAA,BBB,CCC) using source '/path/to/exportcliv2-suite-vX.Y.Z'? [y/N]
+    Proceed with install for instances: (AAA) using source '/path/to/exportcliv2-suite-vX.Y.Z'? [y/N]
     ```
+    (The instance list `(AAA)` reflects your `DEFAULT_INSTANCES_CONFIG` setting).
     Type `y` and press Enter.
 3.  Run the base installer (`./exportcliv2-deploy/install_base_exportcliv2.sh`), which sets up users, directories, binaries, the `bitmover` wheel, systemd units, and the `exportcli-manage` symlink.
-4.  Run the instance configurator (`./exportcliv2-deploy/configure_instance.sh`) for each default instance ("AAA", "BBB", "CCC").
-5.  Run the service manager (`./exportcliv2-deploy/manage_services.sh`) to **enable and then start the main `bitmover.service` AND the services for each default `exportcliv2` instance**.
+4.  Run the instance configurator (`./exportcliv2-deploy/configure_instance.sh`) for each instance listed in `DEFAULT_INSTANCES_CONFIG` (so, for "AAA").
+5.  Run the service manager (`./exportcliv2-deploy/manage_services.sh`) to **enable and then start the main `bitmover.service` AND the service for instance "AAA"**.
 
 **Step 4: Post-Installation: Configure `exportcliv2` Instance "AAA"**
 
-Each `exportcliv2` instance requires specific settings for your environment. Let's configure instance "AAA" as an example.
+The `exportcliv2` instance "AAA" requires specific settings for your environment. The installation script already created a default configuration file.
 
 1.  Edit the instance configuration file for "AAA":
     ```bash
@@ -81,7 +87,6 @@ Each `exportcliv2` instance requires specific settings for your environment. Let
     ```
     **Crucially, update `EXPORT_IP` and `EXPORT_PORTID`** to match your data source. You might also want to adjust `EXPORT_SOURCE` if needed.
 3.  Save the file.
-4.  *(You would repeat similar edits for `/etc/exportcliv2/BBB.conf` and `/etc/exportcliv2/CCC.conf` if you intend to use them).*
 
 **Step 5: Restart the Configured `exportcliv2` Instance ("AAA")**
 
@@ -90,11 +95,11 @@ Use the `exportcli-manage` symlink (created in `/usr/local/bin` during installat
 ```bash
 sudo exportcli-manage -i AAA --restart
 ```
-*(Or, from the `exportcliv2-suite-vX.Y.Z/` directory: `sudo ./exportcliv2-deploy/manage_services.sh -i AAA --restart`)*
+*(Note: This command will display a warning that the operation may take some time if the service is slow to respond to stop signals.)*
 
 **Step 6: Verify Services are Running**
 
-All necessary services should have been started automatically by the orchestrator in Step 3.
+The orchestrator in Step 3 should have started the necessary services, and you've just restarted "AAA" after configuration.
 
 *   **`exportcliv2` Instance "AAA":**
     ```bash
@@ -118,7 +123,7 @@ All necessary services should have been started automatically by the orchestrato
     ```
 *   **Further Configuration & Updates:** Refer to the full "Application Suite Deployment and Management Guide" (the `USER_GUIDE.md` file in your `exportcliv2-suite-vX.Y.Z/` directory) for details on:
     *   Customizing installation paths (e.g., `BASE_DIR_CONFIG` in `install-app.conf`).
-    *   Managing all default instances ("AAA", "BBB", "CCC") or installing specific instances using the `-i` flag with `deploy_orchestrator.sh`.
+    *   Setting up multiple default instances (by modifying `DEFAULT_INSTANCES_CONFIG` before installation) or installing specific instances using the `-i` flag with `deploy_orchestrator.sh --install`.
     *   Advanced `bitmover` settings (in `/etc/exportcliv2/config.ini`).
     *   Updating application components, including surgical updates.
     *   Detailed troubleshooting.
