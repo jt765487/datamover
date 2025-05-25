@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 def create_scan_thread(
     *,
     scan_directory_path: Path,
+    csv_directory_to_put_restart_in: Path,
     file_extension_to_scan: str,
     scan_interval_seconds: float,
     lost_timeout_seconds: float,
@@ -40,6 +41,7 @@ def create_scan_thread(
 
     Args:
         scan_directory_path: The root directory to scan.
+        csv_directory_to_put_restart_in: The directory where .restart trigger files will be created.
         file_extension_to_scan: The file extension (without dot) to look for.
         scan_interval_seconds: How often the scanning cycle should run.
         lost_timeout_seconds: Duration after which a found file is considered "lost".
@@ -59,16 +61,24 @@ def create_scan_thread(
         FileNotFoundError, NotADirectoryError, ValueError: If directory validation fails.
         (The check for scan_interval_seconds <= 0 is assumed to be handled by ScanThread or elsewhere)
     """
-    # 1. Resolve and validate configured directory using the direct argument
+    # 1a. Resolve and validate configured directory using the direct argument
     validated_scan_directory: Path = resolve_and_validate_directory(
         raw_path=scan_directory_path,
         fs=fs,
         dir_label="scan source directory",
     )
 
+    # 1b. Resolve and validate the configured CSV restart directory
+    validated_csv_restart_directory: Path = resolve_and_validate_directory(
+        raw_path=csv_directory_to_put_restart_in,
+        fs=fs,
+        dir_label="CSV restart directory",
+    )
+
     # 2. Create the single-cycle processor
     processor = DoSingleCycle(
         validated_directory_to_scan=validated_scan_directory,
+        csv_restart_directory=validated_csv_restart_directory,
         extension_to_scan_no_dot=file_extension_to_scan,
         lost_timeout=lost_timeout_seconds,
         stuck_active_file_timeout=stuck_active_file_timeout_seconds,

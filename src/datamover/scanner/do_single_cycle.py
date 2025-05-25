@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 from queue import Queue
-from typing import Callable, Dict, Set, Tuple, List
+from typing import Callable, Dict, Set, Tuple, List, Optional
 
 from datamover.file_functions.file_exceptions import ScanDirectoryError
 
@@ -19,6 +19,23 @@ from datamover.scanner.file_state_record import FileStateRecord
 logger = logging.getLogger(__name__)
 
 
+def _get_app_name_from_path(file_path: Path) -> Optional[str]:
+    """
+    Extracts the app name from a filename like 'APPNAME-timestamp.ext'.
+    The app name is assumed to be the part of the filename before the first hyphen.
+    """
+    name = file_path.name
+    head, sep, _ = name.partition('-')
+    if head and sep:
+        return head
+
+    # If there's no hyphen (or it starts with one), warn and return None
+    logger.warning(
+        "Could not extract app name (part before first hyphen) from filename: %r",
+        name,
+    )
+    return None
+
 class DoSingleCycle:
     """
     Encapsulates the logic for performing a single directory scan cycle.
@@ -34,6 +51,7 @@ class DoSingleCycle:
         self,
         *,
         validated_directory_to_scan: Path,
+        csv_restart_directory: Path,
         extension_to_scan_no_dot: str,
         lost_timeout: float,
         stuck_active_file_timeout: float,
@@ -47,6 +65,7 @@ class DoSingleCycle:
 
         Args:
             validated_directory_to_scan: Validated Path of the directory to scan.
+            csv_restart_directory: Validated Path of the directory for .restart files.
             extension_to_scan_no_dot: File extension to filter by (e.g., "pcap").
             lost_timeout: Duration (seconds) after which an unmodified file is 'lost'.
             stuck_active_file_timeout: Duration (seconds) after being first seen,
@@ -57,6 +76,7 @@ class DoSingleCycle:
             fs: Filesystem abstraction instance.
         """
         self.extension_no_dot: str = extension_to_scan_no_dot
+        self.csv_restart_directory: Path = csv_restart_directory
         self.lost_timeout: float = lost_timeout
         self.stuck_active_file_timeout: float = stuck_active_file_timeout
         self.lost_file_queue: Queue[Path] = lost_file_queue  # Changed back
@@ -68,10 +88,11 @@ class DoSingleCycle:
             f"LostFileQ-{self.directory_to_scan.name}"  # Changed back
         )
 
-        logger.info(  # Keep this INFO, it's an initialization summary
-            "Initialized %s for '%s' [Ext: '.%s', Lost Timeout: %.1fs, Stuck Active Timeout: %.1fs]",
+        logger.info(
+            "Initialized %s for '%s' [CSV Restart Dir: '%s', Ext: '.%s', Lost Timeout: %.1fs, Stuck Active Timeout: %.1fs]",
             self.__class__.__name__,
             self.directory_to_scan,
+            self.csv_restart_directory,
             self.extension_no_dot,
             self.lost_timeout,
             self.stuck_active_file_timeout,
@@ -85,7 +106,7 @@ class DoSingleCycle:
     ) -> Tuple[Dict[Path, FileStateRecord], Set[Path], Set[Path]]:
         """
         Executes one full scan cycle.
-        (Docstring from previous version is largely applicable, just note stuck active are not queued by this class)
+
         Args:
             current_file_states: The state of all monitored files from the previous cycle.
             previously_lost_paths: Set of paths considered 'lost' in the previous cycle.
@@ -96,6 +117,7 @@ class DoSingleCycle:
             - next_file_states: The calculated state of all monitored files for the next cycle.
             - currently_lost_paths: Paths identified as 'lost' in *this* cycle.
             - currently_stuck_active_paths: Paths identified as 'stuck active' in *this* cycle.
+
         Raises:
             ScanDirectoryError: If the underlying directory scan fails critically.
         """
@@ -108,13 +130,14 @@ class DoSingleCycle:
                 fs=self.fs,
                 extension_no_dot=self.extension_no_dot,
             )
-            logger.debug(  # This is high volume, keep DEBUG
+            # This is a high-volume, keep at DEBUG
+            logger.debug(
                 "Scan found %d files matching '.%s' in '%s'",
                 len(gathered_data),
                 self.extension_no_dot,
                 self.directory_to_scan,
             )
-        except ScanDirectoryError:  # Error, so log as ERROR
+        except ScanDirectoryError:
             logger.error(
                 "ScanDirectoryError during scan for '%s'. Re-raising.",
                 self.directory_to_scan,
@@ -122,7 +145,7 @@ class DoSingleCycle:
             raise
         except (
             Exception
-        ) as e:  # Unexpected error, log as EXCEPTION (includes stack trace)
+        ) as e:
             logger.exception(
                 "Unexpected error during scan_directory_and_filter for '%s'. Wrapping in ScanDirectoryError.",
                 self.directory_to_scan,
@@ -150,7 +173,8 @@ class DoSingleCycle:
                 monotonic_now=mono_now,
                 wall_now=wall_now,
             )
-            logger.debug(  # High volume, keep DEBUG
+            # High volume, keep at DEBUG
+            logger.debug(
                 "Processor results for '%s': %d next states, %d removed, %d lost, %d stuck active.",
                 self.directory_to_scan,
                 len(next_file_states),
@@ -175,7 +199,8 @@ class DoSingleCycle:
             newly_stuck_active_paths = (
                 currently_stuck_active_paths - previously_stuck_active_paths
             )
-            logger.debug(  # High volume, keep DEBUG
+            # High volume, keep at DEBUG
+            logger.debug(
                 "Processor deltas for '%s': %d newly lost, %d newly stuck active.",
                 self.directory_to_scan,
                 len(newly_lost_paths),
@@ -210,7 +235,6 @@ class DoSingleCycle:
     ) -> None:
         """Orchestrates side effects: reporting changes and queuing newly 'lost' files."""
         try:
-            # report_state_changes logs warnings/info based on findings
             report_state_changes(
                 newly_lost_paths=newly_lost_paths,
                 newly_stuck_active_paths=newly_stuck_active_paths,
@@ -228,7 +252,7 @@ class DoSingleCycle:
 
     def _enqueue_lost_files(
         self, *, paths_to_enqueue: Set[Path]
-    ) -> None:  # Renamed, no problem_type
+    ) -> None:
         """Enqueues newly identified 'lost' file paths onto the lost_file_queue."""
         if not paths_to_enqueue:
             return
@@ -244,13 +268,13 @@ class DoSingleCycle:
             try:
                 safe_put(
                     item=path,
-                    output_queue=self.lost_file_queue,  # Use lost_file_queue
-                    queue_name=self.lost_queue_name,  # Use lost_queue_name
+                    output_queue=self.lost_file_queue,
+                    queue_name=self.lost_queue_name,
                 )
-                logger.debug(
+                logger.info(
                     "Processor enqueued 'lost' file: %s", path
-                )  # DEBUG for per-file success
-            except QueuePutError as e:  # Specific error, log as ERROR
+                )
+            except QueuePutError as e:
                 logger.error(
                     "Processor QueuePutError enqueuing 'lost' file '%s' for %s: %s",
                     path,

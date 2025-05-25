@@ -60,6 +60,7 @@ def _define_thread_factory_specs(
             "factory": create_scan_thread,
             "args_builder": lambda: {
                 "scan_directory_path": cfg.source_dir,
+                "csv_directory_to_put_restart_in": cfg.csv_dir,
                 "file_extension_to_scan": cfg.pcap_extension_no_dot,
                 "scan_interval_seconds": cfg.scanner_check_seconds,
                 "lost_timeout_seconds": cfg.lost_timeout_seconds,

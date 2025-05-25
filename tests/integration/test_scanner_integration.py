@@ -43,6 +43,12 @@ def integration_scan_dir(tmp_path: Path) -> Path:
     scan_dir.mkdir(parents=True, exist_ok=True)
     return scan_dir
 
+@pytest.fixture
+def integration_csv_restart_dir(tmp_path: Path) -> Path:
+    """Provides a temporary directory for CSV restart files for integration tests."""
+    csv_dir = tmp_path / "scanner_integration_csv_restart"
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    return csv_dir
 
 @pytest.fixture
 def real_lost_queue() -> queue.Queue:
@@ -64,11 +70,13 @@ def mock_report_changes_integration(mocker) -> MagicMock:
 @pytest.fixture
 def integration_processor(
     integration_scan_dir: Path,
+    integration_csv_restart_dir: Path,
     real_fs: FS,
     real_lost_queue: queue.Queue,
 ) -> DoSingleCycle:
     return DoSingleCycle(
         validated_directory_to_scan=integration_scan_dir,
+        csv_restart_directory=integration_csv_restart_dir,
         extension_to_scan_no_dot=EXTENSION,
         lost_timeout=SCANNER_TIMEOUTS.lost,
         stuck_active_file_timeout=SCANNER_TIMEOUTS.stuck_active,
