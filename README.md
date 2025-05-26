@@ -290,21 +290,65 @@ Logs are crucial for troubleshooting.
         ```
         (You can add `--since "10m"` or similar timeframes to these commands).
 
-**Optional: Updating the `exportcliv2` Binary**
+**Optional: Updating the `exportcliv2` Binary (e.g., Switching to Official Binary)**
 
-If you later need to use a different `exportcliv2` binary (e.g., the official Netscout one instead of your emulator):
+If you later need to use a different `exportcliv2` binary (for example, switching from the bundled Rust emulator to an official Netscout binary), follow these steps:
 
-1.  Place the new binary somewhere accessible, e.g., `/root/exportcliv2-real.bin`.
-2.  Run the orchestrator in update mode from the `exportcliv2-suite-v0.1.1/` directory:
+1.  **Place the New Binary:**
+    Copy the new `exportcliv2` binary to an accessible location on your server. For example:
+    `/root/exportcliv2-official-vx.y.z`
+
+2.  **Run the Orchestrator Update:**
+    From your installation directory (e.g., `/root/exportcliv2-suite-v0.1.1/`), run the `deploy_orchestrator.sh` script with the `--update` and `--new-binary` flags:
     ```bash
-    sudo ./deploy_orchestrator.sh --update --new-binary /root/exportcliv2-real.bin
+    sudo ./deploy_orchestrator.sh --update --new-binary /root/exportcliv2-official-vx.y.z
     ```
-    Confirm when prompted.
-3.  After the update script finishes, you **must restart** the affected `exportcliv2` instances:
+    The script will prompt for confirmation. Type `y` and press Enter.
+    This will copy the new binary into the application's `bin` directory (e.g., `/var/tmp/testme/bin/`) and update the `exportcliv2` symlink to point to this new binary.
+
+3.  **Update Credentials (IMPORTANT):**
+    The `exportcliv2` instances use credentials stored in `/etc/exportcliv2/common.auth.conf`. If you are switching to an official binary, you will likely need to update these from any placeholder/emulator values to real credentials.
+
+    *   Check the current credentials:
+        ```bash
+        cat /etc/exportcliv2/common.auth.conf
+        ```
+        You might see something like:
+        ```ini
+        # Common authentication tokens
+        EXPORT_AUTH_TOKEN_U="shared_user"
+        EXPORT_AUTH_TOKEN_P="shared_password"
+        ```
+    *   Edit the file to input the correct username and password for the new binary:
+        ```bash
+        sudo nano /etc/exportcliv2/common.auth.conf
+        ```
+        Update the `EXPORT_AUTH_TOKEN_U` and `EXPORT_AUTH_TOKEN_P` values:
+        ```ini
+        # Common authentication tokens
+        EXPORT_AUTH_TOKEN_U="your_actual_username"
+        EXPORT_AUTH_TOKEN_P="your_actual_password"
+        ```
+        Save the file (`Ctrl+O`, Enter, then `Ctrl+X` in `nano`).
+
+4.  **Restart Affected `exportcliv2` Instances:**
+    After the binary update and credential update, you **must restart** any `exportcliv2` instances that use this binary for the changes to take effect:
     ```bash
     sudo exportcli-manage -i AAA --restart
-    # Repeat for other instances if you have them:
+    ```
+    If you have other instances (e.g., DEF, GHI) that were also using the previous binary, restart them as well:
+    ```bash
     # sudo exportcli-manage -i DEF --restart
     # sudo exportcli-manage -i GHI --restart
     ```
-4.  Verify the instance is running with the new binary by checking the status (`sudo exportcli-manage -i AAA --status -l`). The command line for the process will show the new binary path if the symlink was updated correctly.
+    *Note: The restart might take a moment as it stops and starts the service.*
+
+5.  **Verify Operation:**
+    Check the status of the instance to ensure it's running with the new binary and (implicitly) using the new credentials. Use the `-l` flag for more detailed output, which can sometimes show the full command line of the running process.
+    ```bash
+    sudo exportcli-manage -i AAA --status -l
+    ```
+    Look for `Active: active (running)`. The `Main PID` line in the status output for `exportcliv2@AAA.service` should show the `exportcliv2` process. Examining the full command line (if shown by `-l` or in `/proc/<PID>/cmdline`) would confirm the new binary path is being used. More importantly, check the instance logs for successful operation or any authentication errors:
+    ```bash
+    sudo exportcli-manage -i AAA --logs-follow
+    ```
