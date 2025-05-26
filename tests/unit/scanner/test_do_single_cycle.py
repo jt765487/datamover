@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 from queue import Queue
-from typing import Optional, Dict, Set # Python 3.9: Use Dict, Set
+from typing import Optional, Dict, Set  # Python 3.9: Use Dict, Set
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +20,7 @@ from tests.test_utils.logging_helpers import find_log_record
 MODULE = "datamover.scanner.do_single_cycle"
 SCAN_DIR = Path("/resolved/scan_dir")
 # --- MODIFICATION START ---
-CSV_RESTART_DIR = Path("/resolved/csv_restart_dir_for_test") # Dummy path for tests
+CSV_RESTART_DIR = Path("/resolved/csv_restart_dir_for_test")  # Dummy path for tests
 # --- MODIFICATION END ---
 EXT = "pcap"
 LOST_T = 20.0
@@ -37,9 +37,11 @@ def mock_lost_file_queue() -> MagicMock:
 
 
 @pytest.fixture
-def mock_fs() -> MagicMock: # Added a separate mock_fs fixture for clarity
+def mock_fs() -> MagicMock:  # Added a separate mock_fs fixture for clarity
     """Filesystem mock."""
-    return MagicMock(name="MockFS", spec_set=True) # Using spec_set for stricter mocking if desired
+    return MagicMock(
+        name="MockFS", spec_set=True
+    )  # Using spec_set for stricter mocking if desired
 
 
 @pytest.fixture
@@ -48,7 +50,7 @@ def processor(mock_fs: MagicMock, mock_lost_file_queue: MagicMock) -> DoSingleCy
     return DoSingleCycle(
         validated_directory_to_scan=SCAN_DIR,
         # --- MODIFICATION START ---
-        csv_restart_directory=CSV_RESTART_DIR, # Pass the new argument
+        csv_restart_directory=CSV_RESTART_DIR,  # Pass the new argument
         # --- MODIFICATION END ---
         extension_to_scan_no_dot=EXT,
         lost_timeout=LOST_T,
@@ -81,15 +83,11 @@ def patch_put(mocker) -> MagicMock:
 
 
 @pytest.fixture
-def initial_state() -> tuple[
-    Dict[Path, FileStateRecord], Set[Path], Set[Path]
-]:
+def initial_state() -> tuple[Dict[Path, FileStateRecord], Set[Path], Set[Path]]:
     """Return a tuple of (current_states, previously_lost, previously_stuck)."""
     p1 = SCAN_DIR / "a.dat"
     p2 = SCAN_DIR / "b.dat"
-    current_states: Dict[Path, FileStateRecord] = {
-        p1: MagicMock(spec=FileStateRecord)
-    }
+    current_states: Dict[Path, FileStateRecord] = {p1: MagicMock(spec=FileStateRecord)}
     previously_lost: Set[Path] = {p2}
     previously_stuck: Set[Path] = set()
     return current_states, previously_lost, previously_stuck
@@ -113,7 +111,7 @@ def initial_state() -> tuple[
         (
             ValueError("unexpected boom from scan"),
             ScanDirectoryError,
-            logging.ERROR, # Should be ERROR as per DoSingleCycle's logger.exception
+            logging.ERROR,  # Should be ERROR as per DoSingleCycle's logger.exception
             ["Unexpected error during scan_directory_and_filter", str(SCAN_DIR)],
             True,
         ),
@@ -146,8 +144,10 @@ def test_process_one_cycle_scan_errors(
 
     # Using ERROR level because logger.exception logs at ERROR level
     entry = find_log_record(caplog, logging.ERROR, log_msg_substrings)
-    assert entry is not None, f"Expected error log not found for substrings: {log_msg_substrings}"
-    if is_wrapped: # For logger.exception, exc_info will be set
+    assert entry is not None, (
+        f"Expected error log not found for substrings: {log_msg_substrings}"
+    )
+    if is_wrapped:  # For logger.exception, exc_info will be set
         assert entry.exc_info and entry.exc_info[1] is side_effect_exception
         assert str(side_effect_exception) in entry.exc_text
 
@@ -175,7 +175,7 @@ def test_process_one_cycle_process_scan_results_fails(
 
     entry = find_log_record(
         caplog,
-        logging.ERROR, # logger.exception logs at ERROR
+        logging.ERROR,  # logger.exception logs at ERROR
         ["Processor error during process_scan_results", str(SCAN_DIR)],
     )
     assert entry is not None, "Error log for process_scan_results failure not found"
@@ -200,9 +200,9 @@ def test_process_one_cycle_delta_calc_fails_returns_previous(
     # Ensure patch_process returns a tuple of the correct number of elements, even if one is bad type
     patch_process.return_value = (
         {SCAN_DIR / "f.pcap": MagicMock(spec=FileStateRecord)},
-        set(),      # removed_tracking_paths
-        "not-a-set", # currently_lost_paths (this will cause the TypeError in delta calculation)
-        set(),      # currently_stuck_active_paths
+        set(),  # removed_tracking_paths
+        "not-a-set",  # currently_lost_paths (this will cause the TypeError in delta calculation)
+        set(),  # currently_stuck_active_paths
     )
 
     next_s, next_l, next_st = processor.process_one_cycle(current, lost, stuck)
@@ -213,7 +213,7 @@ def test_process_one_cycle_delta_calc_fails_returns_previous(
 
     entry = find_log_record(
         caplog,
-        logging.ERROR, # logger.exception logs at ERROR
+        logging.ERROR,  # logger.exception logs at ERROR
         ["Processor error calculating problem file deltas", str(SCAN_DIR)],
     )
     assert entry and entry.exc_info and entry.exc_info[0] is TypeError
@@ -224,13 +224,14 @@ def test_process_one_cycle_delta_calc_fails_returns_previous(
 
 # ... (other imports and code) ...
 
+
 def test_process_one_cycle_report_state_changes_fails_logs_error(
     processor: DoSingleCycle,
     initial_state: tuple[Dict[Path, FileStateRecord], Set[Path], Set[Path]],
     patch_scan: MagicMock,
     patch_process: MagicMock,
     patch_report: MagicMock,
-    patch_put: MagicMock, # patch_put is still needed to assert it's NOT called
+    patch_put: MagicMock,  # patch_put is still needed to assert it's NOT called
     caplog: pytest.LogCaptureFixture,
 ):
     """Tests that if report_state_changes fails, an error is logged and enqueuing is skipped."""
@@ -246,13 +247,13 @@ def test_process_one_cycle_report_state_changes_fails_logs_error(
 
     # Simulate process_scan_results returning a newly lost file
     patch_process.return_value = (
-        expected_next_states_from_process, # next_file_states
-        set(),                             # removed_tracking_paths
-        {p_newly_lost},                    # currently_lost_paths
-        set(),                             # currently_stuck_active_paths
+        expected_next_states_from_process,  # next_file_states
+        set(),  # removed_tracking_paths
+        {p_newly_lost},  # currently_lost_paths
+        set(),  # currently_stuck_active_paths
     )
     report_error = ValueError("Reporting failed")
-    patch_report.side_effect = report_error # Make report_state_changes fail
+    patch_report.side_effect = report_error  # Make report_state_changes fail
 
     # Act
     next_s, next_l, next_st = processor.process_one_cycle(
@@ -261,10 +262,12 @@ def test_process_one_cycle_report_state_changes_fails_logs_error(
 
     # Assert states are still updated from process_scan_results because the error happens later
     assert next_s == expected_next_states_from_process
-    assert next_l == {p_newly_lost} # currently_lost_paths is returned by process_one_cycle
+    assert next_l == {
+        p_newly_lost
+    }  # currently_lost_paths is returned by process_one_cycle
     assert next_st == set()
 
-    patch_report.assert_called_once() # report_state_changes was called and it failed
+    patch_report.assert_called_once()  # report_state_changes was called and it failed
 
     # --- MODIFICATION START ---
     # _enqueue_lost_files (and thus safe_put) should NOT be called because
@@ -274,7 +277,7 @@ def test_process_one_cycle_report_state_changes_fails_logs_error(
 
     entry = find_log_record(
         caplog,
-        logging.ERROR, # logger.exception logs at ERROR
+        logging.ERROR,  # logger.exception logs at ERROR
         ["Processor error during reporting or queuing phase", str(SCAN_DIR)],
     )
     assert entry is not None, "Error log for reporting/queuing phase failure not found"
@@ -321,11 +324,13 @@ def test_enqueue_variations_and_happy_path_logs(
     test_id: str,
 ):
     """Tests enqueuing logic and detailed debug logs for successful paths."""
-    caplog.set_level(logging.DEBUG) # Ensure DEBUG logs are captured
+    caplog.set_level(logging.DEBUG)  # Ensure DEBUG logs are captured
 
-    mock_gathered_data = [
-        MagicMock(spec=GatheredEntryData, path=SCAN_DIR / "scanned.pcap")
-    ] if next_states_param else [] # Ensure scan result matches if expecting states
+    mock_gathered_data = (
+        [MagicMock(spec=GatheredEntryData, path=SCAN_DIR / "scanned.pcap")]
+        if next_states_param
+        else []
+    )  # Ensure scan result matches if expecting states
     patch_scan.return_value = mock_gathered_data
 
     patch_process.return_value = (next_states_param, set(), lost_set_param, set())
@@ -357,7 +362,7 @@ def test_enqueue_variations_and_happy_path_logs(
     newly_lost_paths = lost_set_param - previously_lost_set
     patch_report.assert_called_once_with(
         newly_lost_paths=newly_lost_paths,
-        newly_stuck_active_paths=set(), # Currently, stuck paths are not passed to report_state_changes for restart trigger yet
+        newly_stuck_active_paths=set(),  # Currently, stuck paths are not passed to report_state_changes for restart trigger yet
         removed_tracking_paths=set(),
         lost_timeout=LOST_T,
         stuck_active_timeout=STUCK_T,
@@ -398,7 +403,9 @@ def test_enqueue_variations_and_happy_path_logs(
             ["Processor deltas for", f"{len(newly_lost_paths)} newly lost"],
         ), "Processor deltas debug log missing"
 
-        for path_enqueued in newly_lost_paths: # Iterate over newly_lost_paths for specific log checks
+        for (
+            path_enqueued
+        ) in newly_lost_paths:  # Iterate over newly_lost_paths for specific log checks
             enqueued_debug_log = find_log_record(
                 caplog,
                 logging.INFO,
@@ -408,7 +415,7 @@ def test_enqueue_variations_and_happy_path_logs(
                 f"Info log for enqueued file {path_enqueued} not found for {test_id}"
             )
 
-    for path_to_put in newly_lost_paths: # Check calls for newly_lost_paths
+    for path_to_put in newly_lost_paths:  # Check calls for newly_lost_paths
         patch_put.assert_any_call(
             item=path_to_put,
             output_queue=processor.lost_file_queue,
@@ -424,11 +431,11 @@ def test_enqueue_variations_and_happy_path_logs(
             QueuePutError("simulated queue full"),
             logging.ERROR,
             "Processor QueuePutError enqueuing 'lost' file",
-            None, # QueuePutError is handled, not re-raised with exc_info in this logger
+            None,  # QueuePutError is handled, not re-raised with exc_info in this logger
         ),
         (
             OSError("simulated disk I/O error"),
-            logging.ERROR, # logger.exception logs at ERROR
+            logging.ERROR,  # logger.exception logs at ERROR
             "Processor unexpected error enqueuing 'lost' file",
             OSError,
         ),
@@ -452,7 +459,7 @@ def test_process_one_cycle_safe_put_fails_in_enqueue_loop(
     # caplog.set_level(logging.DEBUG)
     current_states, previously_lost, _ = initial_state
 
-    patch_scan.return_value = [] # Assume no files found to simplify focus on enqueue error
+    patch_scan.return_value = []  # Assume no files found to simplify focus on enqueue error
 
     file_to_fail_enqueue = SCAN_DIR / "fail_enqueue.pcap"
     # Ensure process_scan_results indicates this file as newly lost
@@ -461,23 +468,25 @@ def test_process_one_cycle_safe_put_fails_in_enqueue_loop(
     }
 
     patch_process.return_value = (
-        expected_next_states_from_process, # next_file_states
-        set(),                             # removed_tracking_paths
-        {file_to_fail_enqueue},            # currently_lost_paths
-        set(),                             # currently_stuck_active_paths
+        expected_next_states_from_process,  # next_file_states
+        set(),  # removed_tracking_paths
+        {file_to_fail_enqueue},  # currently_lost_paths
+        set(),  # currently_stuck_active_paths
     )
     patch_put.side_effect = put_side_effect_exception
 
     next_s, current_l, current_sa = processor.process_one_cycle(
-        current_states, previously_lost, set() # Pass empty set for previously_stuck
+        current_states,
+        previously_lost,
+        set(),  # Pass empty set for previously_stuck
     )
 
     assert next_s == expected_next_states_from_process
     assert current_l == {file_to_fail_enqueue}
     assert current_sa == set()
 
-    patch_report.assert_called_once() # Report is called before enqueue logic within _handle_scan_results_side_effects
-    patch_put.assert_called_once_with( # safe_put is called once and raises exception
+    patch_report.assert_called_once()  # Report is called before enqueue logic within _handle_scan_results_side_effects
+    patch_put.assert_called_once_with(  # safe_put is called once and raises exception
         item=file_to_fail_enqueue,
         output_queue=processor.lost_file_queue,
         queue_name=processor.lost_queue_name,
@@ -485,12 +494,24 @@ def test_process_one_cycle_safe_put_fails_in_enqueue_loop(
 
     full_expected_substrings = [log_msg_main_part, str(file_to_fail_enqueue)]
     log_entry = find_log_record(caplog, expected_log_level, full_expected_substrings)
-    assert log_entry is not None, f"Specific error log for safe_put failure not found. Substrings: {full_expected_substrings}"
+    assert log_entry is not None, (
+        f"Specific error log for safe_put failure not found. Substrings: {full_expected_substrings}"
+    )
 
-    if check_exc_info_type: # This check is for logger.exception cases
-        assert log_entry.exc_info is not None, "exc_info should be present for logger.exception"
-        assert log_entry.exc_info[0] is check_exc_info_type, "Incorrect exception type in exc_info"
+    if check_exc_info_type:  # This check is for logger.exception cases
+        assert log_entry.exc_info is not None, (
+            "exc_info should be present for logger.exception"
+        )
+        assert log_entry.exc_info[0] is check_exc_info_type, (
+            "Incorrect exception type in exc_info"
+        )
         # For direct exceptions passed to logger.error, exc_info[1] is not the exception instance itself
         # For logger.exception, exc_info[1] *is* the exception instance.
-        if expected_log_level == logging.ERROR and log_entry.name == MODULE and "unexpected error" in log_entry.message.lower(): # Heuristic for logger.exception
-             assert log_entry.exc_info[1] is put_side_effect_exception, "Incorrect exception instance in exc_info"
+        if (
+            expected_log_level == logging.ERROR
+            and log_entry.name == MODULE
+            and "unexpected error" in log_entry.message.lower()
+        ):  # Heuristic for logger.exception
+            assert log_entry.exc_info[1] is put_side_effect_exception, (
+                "Incorrect exception instance in exc_info"
+            )

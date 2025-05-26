@@ -116,7 +116,7 @@ def process_scan_results(
         if path in existing_states:
             lost_check_count += 1
             if is_file_lost(
-                    state=state, wall_time_now=wall_now, lost_timeout=lost_timeout
+                state=state, wall_time_now=wall_now, lost_timeout=lost_timeout
             ):
                 currently_lost_paths.add(path)
                 logger.info(

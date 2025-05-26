@@ -1,7 +1,7 @@
 import threading
 from pathlib import Path
 from queue import Queue
-from unittest.mock import MagicMock, call # Added call
+from unittest.mock import MagicMock, call  # Added call
 
 import pytest
 
@@ -147,12 +147,16 @@ class TestCreateScanThread:
         returned_thread = create_scan_thread(
             scan_directory_path=scanner_factory_params["scan_directory_path"],
             # --- MODIFICATION START ---
-            csv_directory_to_put_restart_in=scanner_factory_params["csv_directory_to_put_restart_in"],
+            csv_directory_to_put_restart_in=scanner_factory_params[
+                "csv_directory_to_put_restart_in"
+            ],
             # --- MODIFICATION END ---
             file_extension_to_scan=scanner_factory_params["file_extension_to_scan"],
             scan_interval_seconds=scanner_factory_params["scan_interval_seconds"],
             lost_timeout_seconds=scanner_factory_params["lost_timeout_seconds"],
-            stuck_active_file_timeout_seconds=scanner_factory_params["stuck_active_file_timeout_seconds"],
+            stuck_active_file_timeout_seconds=scanner_factory_params[
+                "stuck_active_file_timeout_seconds"
+            ],
             lost_file_queue=mock_lost_file_queue,
             stop_event=mock_stop_event,
             fs=mock_fs_instance,
@@ -187,7 +191,9 @@ class TestCreateScanThread:
             # --- MODIFICATION END ---
             extension_to_scan_no_dot=scanner_factory_params["file_extension_to_scan"],
             lost_timeout=scanner_factory_params["lost_timeout_seconds"],
-            stuck_active_file_timeout=scanner_factory_params["stuck_active_file_timeout_seconds"],
+            stuck_active_file_timeout=scanner_factory_params[
+                "stuck_active_file_timeout_seconds"
+            ],
             lost_file_queue=mock_lost_file_queue,
             time_func=mock_time_func,
             monotonic_func=mock_monotonic_func,
@@ -209,13 +215,17 @@ class TestCreateScanThread:
         assert returned_thread is patch_scan_thread_constructor.return_value
 
     @pytest.mark.parametrize(
-        "exception_type, error_message, failing_validation_call_index", # MODIFICATION: Added failing_validation_call_index
+        "exception_type, error_message, failing_validation_call_index",  # MODIFICATION: Added failing_validation_call_index
         [
             (FileNotFoundError, "Mock directory not found", 0),
             (NotADirectoryError, "Mock path is not a directory", 0),
             (ValueError, "Mock invalid configuration value for dir", 0),
             (PermissionError, "Mock permission denied for dir", 0),
-            (FileNotFoundError, "Mock CSV directory not found", 1), # MODIFICATION: New test cases for CSV dir
+            (
+                FileNotFoundError,
+                "Mock CSV directory not found",
+                1,
+            ),  # MODIFICATION: New test cases for CSV dir
             (NotADirectoryError, "Mock CSV path is not a directory", 1),
         ],
         ids=[
@@ -223,7 +233,7 @@ class TestCreateScanThread:
             "scan_path_not_dir",
             "scan_dir_value_error",
             "scan_dir_permission_error",
-            "csv_dir_not_found", # MODIFICATION: New test case IDs
+            "csv_dir_not_found",  # MODIFICATION: New test case IDs
             "csv_path_not_dir",
         ],
     )
@@ -231,7 +241,7 @@ class TestCreateScanThread:
         self,
         exception_type: type[Exception],
         error_message: str,
-        failing_validation_call_index: int, # MODIFICATION: Added parameter
+        failing_validation_call_index: int,  # MODIFICATION: Added parameter
         scanner_factory_params: dict,
         mock_lost_file_queue: MagicMock,
         mock_stop_event: MagicMock,
@@ -242,11 +252,16 @@ class TestCreateScanThread:
     ):
         # --- MODIFICATION START ---
         # Configure side_effect to fail on the specified call
-        side_effects = [VALIDATED_SCAN_DIR_PATH, VALIDATED_CSV_RESTART_DIR_PATH] # Default success
+        side_effects = [
+            VALIDATED_SCAN_DIR_PATH,
+            VALIDATED_CSV_RESTART_DIR_PATH,
+        ]  # Default success
         if failing_validation_call_index < len(side_effects):
             side_effects[failing_validation_call_index] = exception_type(error_message)
-        else: # Should not happen with current parametrization but good for safety
-            side_effects = [exception_type(error_message)] * (failing_validation_call_index + 1)
+        else:  # Should not happen with current parametrization but good for safety
+            side_effects = [exception_type(error_message)] * (
+                failing_validation_call_index + 1
+            )
 
         patch_resolve_validate_directory.side_effect = side_effects
         # --- MODIFICATION END ---
@@ -255,12 +270,16 @@ class TestCreateScanThread:
             create_scan_thread(
                 scan_directory_path=scanner_factory_params["scan_directory_path"],
                 # --- MODIFICATION START ---
-                csv_directory_to_put_restart_in=scanner_factory_params["csv_directory_to_put_restart_in"],
+                csv_directory_to_put_restart_in=scanner_factory_params[
+                    "csv_directory_to_put_restart_in"
+                ],
                 # --- MODIFICATION END ---
                 file_extension_to_scan=scanner_factory_params["file_extension_to_scan"],
                 scan_interval_seconds=scanner_factory_params["scan_interval_seconds"],
                 lost_timeout_seconds=scanner_factory_params["lost_timeout_seconds"],
-                stuck_active_file_timeout_seconds=scanner_factory_params["stuck_active_file_timeout_seconds"],
+                stuck_active_file_timeout_seconds=scanner_factory_params[
+                    "stuck_active_file_timeout_seconds"
+                ],
                 lost_file_queue=mock_lost_file_queue,
                 stop_event=mock_stop_event,
                 fs=mock_fs_instance,
@@ -273,15 +292,17 @@ class TestCreateScanThread:
         # Assert how many times resolve_and_validate_directory was called
         # It should be called up to and including the failing call.
         expected_calls = []
-        if failing_validation_call_index >= 0: # Scan dir validation
+        if failing_validation_call_index >= 0:  # Scan dir validation
             expected_calls.append(
-                 call(
+                call(
                     raw_path=scanner_factory_params["scan_directory_path"],
                     fs=mock_fs_instance,
                     dir_label="scan source directory",
                 )
             )
-        if failing_validation_call_index >= 1: # CSV dir validation (only if scan dir passed)
+        if (
+            failing_validation_call_index >= 1
+        ):  # CSV dir validation (only if scan dir passed)
             expected_calls.append(
                 call(
                     raw_path=scanner_factory_params["csv_directory_to_put_restart_in"],
@@ -289,8 +310,13 @@ class TestCreateScanThread:
                     dir_label="CSV restart directory",
                 )
             )
-        patch_resolve_validate_directory.assert_has_calls(expected_calls[:failing_validation_call_index + 1])
-        assert patch_resolve_validate_directory.call_count == failing_validation_call_index + 1
+        patch_resolve_validate_directory.assert_has_calls(
+            expected_calls[: failing_validation_call_index + 1]
+        )
+        assert (
+            patch_resolve_validate_directory.call_count
+            == failing_validation_call_index + 1
+        )
         # --- MODIFICATION END ---
 
         patch_do_single_cycle_constructor.assert_not_called()

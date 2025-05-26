@@ -43,12 +43,14 @@ def integration_scan_dir(tmp_path: Path) -> Path:
     scan_dir.mkdir(parents=True, exist_ok=True)
     return scan_dir
 
+
 @pytest.fixture
 def integration_csv_restart_dir(tmp_path: Path) -> Path:
     """Provides a temporary directory for CSV restart files for integration tests."""
     csv_dir = tmp_path / "scanner_integration_csv_restart"
     csv_dir.mkdir(parents=True, exist_ok=True)
     return csv_dir
+
 
 @pytest.fixture
 def real_lost_queue() -> queue.Queue:

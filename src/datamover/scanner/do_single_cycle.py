@@ -1,40 +1,21 @@
 import logging
 from pathlib import Path
 from queue import Queue
-from typing import Callable, Dict, Set, Tuple, List, Optional
+from typing import Callable, Dict, Set, Tuple, List
 
 from datamover.file_functions.file_exceptions import ScanDirectoryError
-
 from datamover.file_functions.fs_mock import FS
 from datamover.file_functions.gather_entry_data import GatheredEntryData
 from datamover.file_functions.scan_directory_and_filter import (
     scan_directory_and_filter,
 )
 from datamover.queues.queue_functions import safe_put, QueuePutError
-
+from datamover.scanner.file_state_record import FileStateRecord
 from datamover.scanner.process_scan_results import process_scan_results
 from datamover.scanner.scan_reporting import report_state_changes
-from datamover.scanner.file_state_record import FileStateRecord
 
 logger = logging.getLogger(__name__)
 
-
-def _get_app_name_from_path(file_path: Path) -> Optional[str]:
-    """
-    Extracts the app name from a filename like 'APPNAME-timestamp.ext'.
-    The app name is assumed to be the part of the filename before the first hyphen.
-    """
-    name = file_path.name
-    head, sep, _ = name.partition('-')
-    if head and sep:
-        return head
-
-    # If there's no hyphen (or it starts with one), warn and return None
-    logger.warning(
-        "Could not extract app name (part before first hyphen) from filename: %r",
-        name,
-    )
-    return None
 
 class DoSingleCycle:
     """
@@ -143,9 +124,7 @@ class DoSingleCycle:
                 self.directory_to_scan,
             )
             raise
-        except (
-            Exception
-        ) as e:
+        except Exception as e:
             logger.exception(
                 "Unexpected error during scan_directory_and_filter for '%s'. Wrapping in ScanDirectoryError.",
                 self.directory_to_scan,
@@ -250,9 +229,7 @@ class DoSingleCycle:
                 self.directory_to_scan,
             )
 
-    def _enqueue_lost_files(
-        self, *, paths_to_enqueue: Set[Path]
-    ) -> None:
+    def _enqueue_lost_files(self, *, paths_to_enqueue: Set[Path]) -> None:
         """Enqueues newly identified 'lost' file paths onto the lost_file_queue."""
         if not paths_to_enqueue:
             return
@@ -271,9 +248,7 @@ class DoSingleCycle:
                     output_queue=self.lost_file_queue,
                     queue_name=self.lost_queue_name,
                 )
-                logger.info(
-                    "Processor enqueued 'lost' file: %s", path
-                )
+                logger.info("Processor enqueued 'lost' file: %s", path)
             except QueuePutError as e:
                 logger.error(
                     "Processor QueuePutError enqueuing 'lost' file '%s' for %s: %s",

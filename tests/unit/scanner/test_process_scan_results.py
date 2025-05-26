@@ -261,9 +261,7 @@ def test_complex_scenario(
     # We only call the 'active' and 'present' helpers on non‐lost files,
     # i.e. everything except p2_becomes_lost:
     expected_active_calls = [
-        call(record=st)
-        for p, st in mocked_next_states.items()
-        if p != p2_becomes_lost
+        call(record=st) for p, st in mocked_next_states.items() if p != p2_becomes_lost
     ]
     assert mock_is_active.call_args_list == expected_active_calls
 
