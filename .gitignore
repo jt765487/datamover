@@ -1,0 +1,34 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+sdist/
+
+# Virtual environments
+.venv
+
+# IDE settings
+.idea/
+
+# Test & Linter Caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Coverage reports
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+coverage.json
+
+# Application-specific build artifacts (from your create_bundle.sh)
+# Consider if you ever want to commit these (e.g., release tarballs)
+# If not, uncomment and adjust patterns:
+ _release_staging/
+# exportcliv2-suite-v*.tar.gz

@@ -1,0 +1,62 @@
+# ----------------------------------------------------------
+# Configuration File for the PCAP Uploader Service (bitmover)
+# Templated by base installer
+# ----------------------------------------------------------
+
+[Directories]
+# All directories must be on the same file system.
+base_dir = {{BASE_DIR}}
+
+# Directory to put log files in. This directory must exist.
+logger_dir = {{BITMOVER_LOG_DIR}}
+
+[Files]
+# The file extension to look for for pcap files when scanning the source directory.
+pcap_extension_no_dot = pcap
+
+# The file extension to look for when scanning the source directory for CSV files.
+csv_extension_no_dot = csv
+
+[Mover]
+# How often (in seconds) to check the queue for files to move from the source directory to the worker directory.
+# Leave at the default of 0.5 seconds.
+move_poll_interval_seconds = 0.5
+
+[Scanner]
+# The stuck_active_file_timeout_seconds must be greater than the lost_timeout_seconds.
+
+# How often (in seconds) to scan the source directory for lost / broken files.
+scanner_check_seconds = 15.0
+
+# How long (in seconds) to wait for a file to be considered "lost" and moved to the worker directory.
+lost_timeout_seconds = 90.0
+
+# How long (in seconds) to wait for a file to be considered "broken" (e.g., if it is still being written to).
+stuck_active_file_timeout_seconds = 180.0
+
+[Tailer]
+# How often (in seconds) to check the exit - leave at the default of 0.5 seconds.
+event_queue_poll_timeout_seconds = 0.5
+
+[Uploader]
+# How often (in seconds) to check the queue for files to upload from the worker directory.
+uploader_poll_interval_seconds = 0.5
+
+# How often to report progress - leave at the default of 60 seconds.
+heartbeat_target_interval_s = 60.0
+
+# Full URL of the remote endpoint for uploading PCAP files
+remote_host_url = {{REMOTE_HOST_URL}}
+
+# How long (in seconds) to wait for the server to respond during upload
+request_timeout = 30.0
+
+# IMPORTANT: Set this to 'true' if using HTTPS (https://...) AND the server has a valid SSL certificate.
+# Setting to 'false' disables certificate checking (less secure, use only for testing or specific internal networks).
+verify_ssl = false
+
+# Initial delay (in seconds) before retrying a failed network connection/upload
+initial_backoff = 1.0
+
+# Maximum delay (in seconds) between network retries (prevents excessively long waits)
+max_backoff = 60.0
