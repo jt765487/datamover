@@ -265,7 +265,7 @@ class TestAppScannerStuckAndLostFiles:
             caplog,
             logging.INFO,
             required_substrings=[
-                "Identified a new file as LOST",
+                "Identified file as LOST",
                 str(pcap_source_path),
             ],
         )

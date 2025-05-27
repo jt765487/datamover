@@ -49,9 +49,7 @@ def processor(mock_fs: MagicMock, mock_lost_file_queue: MagicMock) -> DoSingleCy
     """DoSingleCycle instance with injected time, fs, and queue mocks."""
     return DoSingleCycle(
         validated_directory_to_scan=SCAN_DIR,
-        # --- MODIFICATION START ---
         csv_restart_directory=CSV_RESTART_DIR,  # Pass the new argument
-        # --- MODIFICATION END ---
         extension_to_scan_no_dot=EXT,
         lost_timeout=LOST_T,
         stuck_active_file_timeout=STUCK_T,
@@ -278,7 +276,7 @@ def test_process_one_cycle_report_state_changes_fails_logs_error(
     entry = find_log_record(
         caplog,
         logging.ERROR,  # logger.exception logs at ERROR
-        ["Processor error during reporting or queuing phase", str(SCAN_DIR)],
+        ["Processor error during side‐effects for", str(SCAN_DIR)],
     )
     assert entry is not None, "Error log for reporting/queuing phase failure not found"
     assert entry.exc_info and entry.exc_info[1] is report_error

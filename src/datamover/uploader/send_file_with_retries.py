@@ -127,7 +127,7 @@ class RetryableFileSender:
         Returns:
             True if the file sending process concluded decisively (moved to UPLOADED
                  or DEAD_LETTER, or source vanished).
-            False if a CRITICAL error occurred (e.g., couldn't move to final
+            False if a CRITICAL error occurred (e.g., couldn't move to the final
                   destination) or if stop_event was set mid-process.
         """
         file_name: str = file_path.name

@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from datamover.file_functions.gather_entry_data import (
@@ -119,11 +120,20 @@ def process_scan_results(
                 state=state, wall_time_now=wall_now, lost_timeout=lost_timeout
             ):
                 currently_lost_paths.add(path)
+
+                # Format the file's mtime_wall
+                mtime_wall_str = datetime.fromtimestamp(state.mtime_wall).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                # Calculate age of mtime (how long since last modification)
+                mtime_age_seconds = wall_now - state.mtime_wall
+
                 logger.info(
-                    "Identified a new file as LOST: %s (mtime: %s, age: %.1fs > %.1fs)",
+                    "Identified file as LOST: %s "
+                    "(last_modified_wall: %s, mtime_age: %.1fs > threshold: %.1fs sec)",
                     path,
-                    state.mtime_wall,
-                    (wall_now - state.mtime_wall),
+                    mtime_wall_str,  # Human-readable last modification time
+                    mtime_age_seconds,  # How long ago it was modified
                     lost_timeout,
                 )
                 # Skip stuck‐active check for anything already lost
@@ -140,16 +150,16 @@ def process_scan_results(
 
         if active and present_too_long:
             currently_stuck_active_paths.add(path)
-            logger.info(
-                "Identified file as STUCK ACTIVE: %s (first_seen_mono: %s, age_mono: %.1fs > %.1fs)",
+            age_seconds = monotonic_now - state.first_seen_mono
+            logger.warning(
+                "Identified file as STUCK ACTIVE: %s (age: %.1fs > threshold: %.1fs sec)",
                 path,
-                state.first_seen_mono,
-                (monotonic_now - state.first_seen_mono),
+                age_seconds,
                 stuck_active_timeout,
             )
         elif present_too_long:
             # present too long but didn’t change
-            logger.info(
+            logger.warning(
                 "File %s present too long (%.1fs) but NOT active.",
                 path,
                 (monotonic_now - state.first_seen_mono),
@@ -163,6 +173,13 @@ def process_scan_results(
         stuck_check_eligible_count,
         len(currently_stuck_active_paths),
     )
+
+    if len(currently_stuck_active_paths) > 0:
+        logger.info(
+            "Found %d files that are stuck active and being watched [%s].",
+            len(currently_stuck_active_paths),
+            ", ".join(str(p) for p in currently_stuck_active_paths),
+        )
 
     return (
         next_file_states,

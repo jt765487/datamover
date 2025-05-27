@@ -13,6 +13,7 @@ from datamover.queues.queue_functions import safe_put, QueuePutError
 from datamover.scanner.file_state_record import FileStateRecord
 from datamover.scanner.process_scan_results import process_scan_results
 from datamover.scanner.scan_reporting import report_state_changes
+from datamover.scanner.stuck_app_reset import determine_app_restart_actions
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class DoSingleCycle:
         extension_to_scan_no_dot: str,
         lost_timeout: float,
         stuck_active_file_timeout: float,
-        lost_file_queue: Queue[Path],  # Changed back from output_queue
+        lost_file_queue: Queue[Path],
         time_func: Callable[[], float],
         monotonic_func: Callable[[], float],
         fs: FS,
@@ -60,14 +61,13 @@ class DoSingleCycle:
         self.csv_restart_directory: Path = csv_restart_directory
         self.lost_timeout: float = lost_timeout
         self.stuck_active_file_timeout: float = stuck_active_file_timeout
-        self.lost_file_queue: Queue[Path] = lost_file_queue  # Changed back
+        self.lost_file_queue: Queue[Path] = lost_file_queue
         self.time_func: Callable[[], float] = time_func
         self.monotonic_func: Callable[[], float] = monotonic_func
         self.fs: FS = fs
         self.directory_to_scan: Path = validated_directory_to_scan
-        self.lost_queue_name = (
-            f"LostFileQ-{self.directory_to_scan.name}"  # Changed back
-        )
+        self.lost_queue_name = f"LostFileQ-{self.directory_to_scan.name}"
+        self.previously_signaled_stuck_apps: Set[str] = set()
 
         logger.info(
             "Initialized %s for '%s' [CSV Restart Dir: '%s', Ext: '.%s', Lost Timeout: %.1fs, Stuck Active Timeout: %.1fs]",
@@ -200,6 +200,7 @@ class DoSingleCycle:
         self._handle_scan_results_side_effects(
             newly_lost_paths=newly_lost_paths,
             newly_stuck_active_paths=newly_stuck_active_paths,
+            currently_stuck_active_paths=currently_stuck_active_paths,
             removed_tracking_paths=removed_tracking_paths,
         )
 
@@ -209,10 +210,11 @@ class DoSingleCycle:
         self,
         *,
         newly_lost_paths: Set[Path],
-        newly_stuck_active_paths: Set[Path],
+        newly_stuck_active_paths: Set[Path],  # For reporting via report_state_changes
+        currently_stuck_active_paths: Set[Path],  # For determining restart triggers
         removed_tracking_paths: Set[Path],
     ) -> None:
-        """Orchestrates side effects: reporting changes and queuing newly 'lost' files."""
+        """Orchestrates side effects: reporting, queuing, and restart triggers."""
         try:
             report_state_changes(
                 newly_lost_paths=newly_lost_paths,
@@ -221,11 +223,54 @@ class DoSingleCycle:
                 lost_timeout=self.lost_timeout,
                 stuck_active_timeout=self.stuck_active_file_timeout,
             )
-            # Only enqueue 'lost' files
             self._enqueue_lost_files(paths_to_enqueue=newly_lost_paths)
-        except Exception:  # Error in reporting/queuing, log as EXCEPTION
+
+            # --- Handle Restart Triggers for Stuck Applications ---
+            logger.debug(
+                "Determining restart actions for %d currently stuck active path(s). "
+                "Previously signaled apps: %s",
+                len(currently_stuck_active_paths),
+                self.previously_signaled_stuck_apps
+                if self.previously_signaled_stuck_apps
+                else "None",
+            )
+
+            # current_stuck_file_paths from determine_app_restart_actions's perspective
+            # is currently_stuck_active_paths from process_scan_results
+            restart_files_to_create, next_signaled_stuck_apps = (
+                determine_app_restart_actions(
+                    current_stuck_file_paths=currently_stuck_active_paths,
+                    previously_signaled_apps=self.previously_signaled_stuck_apps,
+                    restart_trigger_directory=self.csv_restart_directory,
+                )
+            )
+
+            if restart_files_to_create:
+                # The number of files to create directly corresponds to the number of
+                # unique applications newly identified as needing a signal.
+                logger.info(
+                    "Identified %d application(s) requiring a new restart trigger.",
+                    len(restart_files_to_create),
+                )
+                self._create_restart_trigger_files(
+                    files_to_create=restart_files_to_create
+                )
+            else:
+                logger.debug(
+                    "No new restart triggers required for stuck applications in this cycle."
+                )
+
+            # Update the set of signaled apps for the next cycle
+            self.previously_signaled_stuck_apps = next_signaled_stuck_apps
+            logger.debug(
+                "Updated previously_signaled_stuck_apps for next cycle: %s",
+                self.previously_signaled_stuck_apps
+                if self.previously_signaled_stuck_apps
+                else "None",
+            )
+        except Exception:  # Main try-except for all side effects
             logger.exception(
-                "Processor error during reporting or queuing phase for '%s'. Side effects may be incomplete.",
+                "Processor error during side‐effects for '%s'. Some actions may be incomplete.",
                 self.directory_to_scan,
             )
 
@@ -241,7 +286,7 @@ class DoSingleCycle:
             len(paths_to_enqueue),
             self.directory_to_scan,
         )
-        for path in sorted(list(paths_to_enqueue)):
+        for path in sorted(paths_to_enqueue):
             try:
                 safe_put(
                     item=path,
@@ -264,3 +309,54 @@ class DoSingleCycle:
                     path,
                     self.lost_queue_name,
                 )
+
+    def _create_restart_trigger_files(self, *, files_to_create: Set[Path]) -> None:
+        """
+        Creates (touches) the specified .restart trigger files.
+
+        Uses the configured filesystem abstraction (self.fs.open).
+        Logs success for each created file and errors for any failures.
+        Failures to create one file do not prevent attempts to create others.
+
+        Args:
+            files_to_create: A set of Path objects representing the full paths
+                             to the .restart files that need to be created.
+        """
+        if not files_to_create:
+            return
+
+        logger.info(
+            "Attempting to create %d restart trigger file(s)...", len(files_to_create)
+        )
+        created_count = 0
+        failed_count = 0
+
+        for restart_file_path in sorted(
+            files_to_create
+        ):  # Sort for consistent log order
+            try:
+                # Atomically create an empty .restart file if it does not already exist.
+                # The 'a' mode creates if not exists, and updates timestamp if it does.
+                with self.fs.open(restart_file_path, "a"):  # Using 'a' to create/touch
+                    pass  # The file is created/timestamp updated by opening in 'a' or 'w'
+                logger.info(
+                    "Successfully created/updated restart trigger file: %s",
+                    restart_file_path,
+                )
+                created_count += 1
+            except Exception:  # Catch broad exceptions as per NFR2 for robustness
+                logger.exception(
+                    "Failed to create/update restart trigger file: %s",
+                    restart_file_path,
+                )
+                failed_count += 1
+
+        if created_count > 0:
+            logger.info(
+                "Finished creating/updating %d restart trigger file(s).", created_count
+            )
+        if failed_count > 0:
+            logger.warning(
+                "Failed to create/update %d restart trigger file(s). See previous errors.",
+                failed_count,
+            )
