@@ -187,6 +187,7 @@ debug "Validating mandatory configuration variables from '$CONFIG_FILE_PATH'..."
 : "${VERSIONED_DATAMOVER_WHEEL_FILENAME:?VERSIONED_DATAMOVER_WHEEL_FILENAME must be defined in $CONFIG_FILE_PATH}" "$EXIT_CODE_CONFIG_ERROR"
 : "${REMOTE_HOST_URL_CONFIG:?REMOTE_HOST_URL_CONFIG must be defined in $CONFIG_FILE_PATH}" "$EXIT_CODE_CONFIG_ERROR"
 : "${EXPORT_TIMEOUT_CONFIG:?EXPORT_TIMEOUT_CONFIG must be defined in $CONFIG_FILE_PATH}" "$EXIT_CODE_CONFIG_ERROR"
+: "${WHEELHOUSE_SUBDIR:?WHEELHOUSE_SUBDIR must be defined in $CONFIG_FILE_PATH for offline installs}"
 
 if ! [[ "$REMOTE_HOST_URL_CONFIG" =~ ^https?:// ]]; then
   error_exit "REMOTE_HOST_URL_CONFIG ('$REMOTE_HOST_URL_CONFIG') must start with http:// or https://" "$EXIT_CODE_CONFIG_ERROR"
@@ -224,6 +225,7 @@ readonly BASE_VARS_FILE="/etc/default/${APP_NAME}_base_vars"
 readonly REMOTE_HOST_URL="${REMOTE_HOST_URL_CONFIG}"
 readonly SOURCE_VERSIONED_APP_BINARY_FILE_PATH="${SCRIPT_DIR}/${VERSIONED_APP_BINARY_FILENAME}"
 readonly SOURCE_VERSIONED_WHEEL_FILE_PATH="${SCRIPT_DIR}/${VERSIONED_DATAMOVER_WHEEL_FILENAME}"
+readonly LOCAL_WHEELHOUSE_DIR="${SCRIPT_DIR}/${WHEELHOUSE_SUBDIR}"
 
 debug "Running pre-flight checks..."
 [[ -f "$SOURCE_VERSIONED_APP_BINARY_FILE_PATH" ]] || error_exit "App binary not found: $SOURCE_VERSIONED_APP_BINARY_FILE_PATH" "$EXIT_CODE_CONFIG_ERROR"
@@ -286,35 +288,173 @@ install_file_to_dest() {
   fi
 }
 
+#setup_python_venv() {
+#  local venv_path="$1"; local wheel_to_install="$2"; local venv_owner="$3"; local venv_group="$4"
+#  ensure_directory "$(dirname "$venv_path")" "$venv_owner" "$venv_group" "0755"
+#  local pip_executable="${venv_path}/bin/pip"
+#  local pip_opts=()
+#  if [[ "$VERBOSE_MODE" != true && "$DRY_RUN" != true ]]; then pip_opts+=("-q"); fi
+#
+#  if [[ -f "$pip_executable" && "$DRY_RUN" != true ]]; then
+#    debug "Python venv likely exists at '$venv_path'."
+#  elif [[ "$DRY_RUN" == true ]]; then
+#    info "[DRY-RUN] Would check for Python venv at '$venv_path' and create if not found."
+#  fi
+#
+#  if [[ "$DRY_RUN" == true || ! -f "$pip_executable" ]]; then
+#      debug "Creating Python venv at '$venv_path' (or simulating for dry_run)..."
+#      if ! run python3 -m venv "$venv_path"; then error_exit "Failed to create Python venv." "$EXIT_CODE_ACTION_FAILED"; fi
+#  fi
+#
+#  debug "Upgrading pip and installing/upgrading wheel '$wheel_to_install' into '$venv_path'..."
+#  if ! run "$pip_executable" install "${pip_opts[@]}" --upgrade pip; then error_exit "Failed to upgrade pip." "$EXIT_CODE_ACTION_FAILED"; fi
+#  if ! run "$pip_executable" install "${pip_opts[@]}" --upgrade "$wheel_to_install"; then error_exit "Failed to install/upgrade wheel." "$EXIT_CODE_ACTION_FAILED"; fi
+#
+#  if [[ "$DRY_RUN" != true ]]; then
+#    info "Setting venv ownership for '$venv_path' to '$venv_owner:$venv_group'..."
+#    chown -R "$venv_owner:$venv_group" "$venv_path" || error_exit "Failed to set venv ownership on '$venv_path'." "$EXIT_CODE_FILE_ERROR"
+#  else
+#    info "[DRY-RUN] Would execute: chown -R \"$venv_owner:$venv_group\" \"$venv_path\""
+#  fi
+#  debug "Python setup complete for '$venv_path'."
+#}
+
 setup_python_venv() {
-  local venv_path="$1"; local wheel_to_install="$2"; local venv_owner="$3"; local venv_group="$4"
+  local venv_path="$1"
+  # This is the FILENAME of the main application wheel (e.g., datamover-vX.Y.Z-py3-none-any.whl)
+  # It's assumed to be in $SCRIPT_DIR
+  local app_wheel_filename="$2"
+  local venv_owner="$3"
+  local venv_group="$4"
+
+  # Full path to the application wheel (expected in the same directory as the script)
+  local app_wheel_source_path="${SCRIPT_DIR}/${app_wheel_filename}"
+
   ensure_directory "$(dirname "$venv_path")" "$venv_owner" "$venv_group" "0755"
   local pip_executable="${venv_path}/bin/pip"
-  local pip_opts=()
-  if [[ "$VERBOSE_MODE" != true && "$DRY_RUN" != true ]]; then pip_opts+=("-q"); fi
+  local python_executable="${venv_path}/bin/python" # For bootstrapping pip if needed
 
+  local online_install_fully_succeeded=false
+  local pip_online_opts=() # Options for online attempts (e.g., can include -q)
+  local pip_offline_opts=("--no-cache-dir") # Options for offline attempts
+
+  if [[ "$VERBOSE_MODE" != true && "$DRY_RUN" != true ]]; then
+    pip_online_opts+=("-q")
+    pip_offline_opts+=("-q")
+  fi
+
+  # --- Create venv (or ensure it exists) ---
   if [[ -f "$pip_executable" && "$DRY_RUN" != true ]]; then
-    debug "Python venv likely exists at '$venv_path'."
+    debug "Python venv with pip likely exists at '$venv_path'."
   elif [[ "$DRY_RUN" == true ]]; then
     info "[DRY-RUN] Would check for Python venv at '$venv_path' and create if not found."
   fi
 
   if [[ "$DRY_RUN" == true || ! -f "$pip_executable" ]]; then
       debug "Creating Python venv at '$venv_path' (or simulating for dry_run)..."
-      if ! run python3 -m venv "$venv_path"; then error_exit "Failed to create Python venv." "$EXIT_CODE_ACTION_FAILED"; fi
+      if ! run python3 -m venv "$venv_path"; then
+          error_exit "Failed to create Python venv at '$venv_path'." "$EXIT_CODE_ACTION_FAILED"
+      fi
+      if [[ "$DRY_RUN" != true && ! -x "$pip_executable" ]]; then
+          # This case is unusual but means venv creation succeeded but pip is missing.
+          # The fallback logic will handle bootstrapping pip from the wheelhouse.
+          warn "pip executable not found in venv after creation. Online attempts may fail, relying on offline bootstrap."
+      fi
   fi
 
-  debug "Upgrading pip and installing/upgrading wheel '$wheel_to_install' into '$venv_path'..."
-  if ! run "$pip_executable" install "${pip_opts[@]}" --upgrade pip; then error_exit "Failed to upgrade pip." "$EXIT_CODE_ACTION_FAILED"; fi
-  if ! run "$pip_executable" install "${pip_opts[@]}" --upgrade "$wheel_to_install"; then error_exit "Failed to install/upgrade wheel." "$EXIT_CODE_ACTION_FAILED"; fi
+  # --- Attempt 1: Online Installation ---
+  if [[ "$DRY_RUN" != true ]]; then
+    info "Attempting online installation/upgrade of Python packages..."
 
+    # 1a. Upgrade pip (online)
+    info "Attempting to upgrade pip from online sources..."
+    if run "$pip_executable" install "${pip_online_opts[@]}" --upgrade pip; then
+      info "pip upgraded successfully from online sources."
+
+      # 1b. Install application wheel (online, dependencies from online)
+      info "Attempting to install application wheel '$app_wheel_filename' (from '$app_wheel_source_path') with online dependencies..."
+      if [[ ! -f "$app_wheel_source_path" ]]; then
+         warn "Application wheel '$app_wheel_source_path' not found. Skipping online app install attempt."
+      elif run "$pip_executable" install "${pip_online_opts[@]}" --upgrade "$app_wheel_source_path"; then
+        info "Application wheel '$app_wheel_filename' and its dependencies installed successfully using online sources."
+        online_install_fully_succeeded=true # Mark full success
+      else
+        warn "Online installation of application wheel '$app_wheel_filename' failed. Will attempt offline fallback."
+      fi
+    else
+      warn "Online upgrade of pip failed. Will attempt offline fallback for all Python packages."
+    fi
+  elif [[ "$DRY_RUN" == true ]]; then
+    info "[DRY-RUN] Simulating Python package installation..."
+    info "[DRY-RUN] Would attempt online upgrade of pip."
+    info "[DRY-RUN] Would attempt online install of '$app_wheel_filename' from '$app_wheel_source_path' (fetching dependencies online)."
+    info "[DRY-RUN] If any online step were to fail, script would fall back to offline installation using wheelhouse: '$LOCAL_WHEELHOUSE_DIR'."
+    # For dry run, we don't actually know if online would succeed, so we'll just proceed to describe offline steps too.
+  fi
+
+  # --- Attempt 2: Offline Fallback Installation ---
+  if [[ ("$online_install_fully_succeeded" == false && "$DRY_RUN" != true) || "$DRY_RUN" == true ]]; then
+    if [[ "$DRY_RUN" != true ]]; then # Only log actual fallback if not in dry_run mode already showing this path
+        info "Falling back to offline installation using local application wheel and wheelhouse: '$LOCAL_WHEELHOUSE_DIR'."
+    elif [[ "$DRY_RUN" == true ]]; then # For dry_run, explicitly state we are now describing offline part
+        info "[DRY-RUN] Describing offline installation fallback:"
+    fi
+
+    if [[ ! -d "$LOCAL_WHEELHOUSE_DIR" ]]; then
+        error_exit "Offline fallback required, but wheelhouse directory '$LOCAL_WHEELHOUSE_DIR' not found." "$EXIT_CODE_CONFIG_ERROR"
+    fi
+
+    # 2a. Ensure pip, setuptools, wheel are installed/upgraded from wheelhouse
+    # This ensures we have a known good pip for the rest of the offline operations.
+    # Find the latest versions of core wheels in the wheelhouse.
+    local pip_wheel_in_wh; pip_wheel_in_wh=$(find "$LOCAL_WHEELHOUSE_DIR" -name "pip-*.whl" -type f | sort -V | tail -n 1)
+    local setuptools_wheel_in_wh; setuptools_wheel_in_wh=$(find "$LOCAL_WHEELHOUSE_DIR" -name "setuptools-*.whl" -type f | sort -V | tail -n 1)
+    local wheel_pkg_wheel_in_wh; wheel_pkg_wheel_in_wh=$(find "$LOCAL_WHEELHOUSE_DIR" -name "wheel-*.whl" -type f | sort -V | tail -n 1) # The 'wheel' package itself
+
+    if [[ -z "$pip_wheel_in_wh" ]]; then
+        error_exit "Core 'pip' wheel not found in '$LOCAL_WHEELHOUSE_DIR' for offline installation." "$EXIT_CODE_PREREQUISITE_ERROR"
+    fi
+
+    local core_wheels_to_install_offline=("$pip_wheel_in_wh")
+    if [[ -n "$setuptools_wheel_in_wh" ]]; then core_wheels_to_install_offline+=("$setuptools_wheel_in_wh"); fi
+    if [[ -n "$wheel_pkg_wheel_in_wh" ]]; then core_wheels_to_install_offline+=("$wheel_pkg_wheel_in_wh"); fi
+
+    info "Ensuring/upgrading pip, setuptools, wheel from wheelhouse using: ${core_wheels_to_install_offline[*]}"
+    # Prefer using the venv's python to install/bootstrap pip to avoid issues with a potentially broken existing pip.
+    if ! run "$python_executable" -m pip install "${pip_offline_opts[@]}" --no-index --find-links "$LOCAL_WHEELHOUSE_DIR" --upgrade "${core_wheels_to_install_offline[@]}"; then
+        error_exit "Failed to install/upgrade pip/setuptools/wheel from wheelhouse '$LOCAL_WHEELHOUSE_DIR' using '$python_executable -m pip'." "$EXIT_CODE_ACTION_FAILED"
+    fi
+    info "Core tools (pip, setuptools, wheel) installed/upgraded from wheelhouse."
+
+    # 2b. Install application wheel (offline, dependencies from wheelhouse)
+    info "Installing application wheel '$app_wheel_filename' (from '$app_wheel_source_path') with dependencies from wheelhouse '$LOCAL_WHEELHOUSE_DIR'..."
+    if [[ ! -f "$app_wheel_source_path" ]]; then
+       error_exit "Application wheel '$app_wheel_source_path' not found for offline installation." "$EXIT_CODE_CONFIG_ERROR"
+    fi
+
+    # The app wheel itself is specified by its direct path. --find-links is for its dependencies from the wheelhouse.
+    if ! run "$pip_executable" install "${pip_offline_opts[@]}" --no-index --find-links "$LOCAL_WHEELHOUSE_DIR" --upgrade "$app_wheel_source_path"; then
+      error_exit "Offline installation of application wheel '$app_wheel_filename' failed. Ensure all dependencies are in '$LOCAL_WHEELHOUSE_DIR'." "$EXIT_CODE_ACTION_FAILED"
+    fi
+    info "Application wheel '$app_wheel_filename' and its dependencies installed successfully using offline sources."
+    if [[ "$DRY_RUN" != true ]]; then online_install_fully_succeeded=true; fi # Mark success if offline path completes
+  fi
+
+  # Final check: If not in dry_run and no method succeeded
+  if [[ "$DRY_RUN" != true && "$online_install_fully_succeeded" == false ]]; then
+    error_exit "All attempts to install Python packages (online and offline) failed." "$EXIT_CODE_ACTION_FAILED"
+  fi
+
+  # --- Set Ownership ---
   if [[ "$DRY_RUN" != true ]]; then
     info "Setting venv ownership for '$venv_path' to '$venv_owner:$venv_group'..."
-    chown -R "$venv_owner:$venv_group" "$venv_path" || error_exit "Failed to set venv ownership on '$venv_path'." "$EXIT_CODE_FILE_ERROR"
+    if ! chown -R "$venv_owner:$venv_group" "$venv_path"; then # Directly call, run() is for commands we want to log failure for / increment FAIL_COUNT
+        error_exit "Failed to set venv ownership on '$venv_path'." "$EXIT_CODE_FILE_ERROR"
+    fi
   else
     info "[DRY-RUN] Would execute: chown -R \"$venv_owner:$venv_group\" \"$venv_path\""
   fi
-  debug "Python setup complete for '$venv_path'."
+  debug "Python virtual environment setup complete for '$venv_path'."
 }
 
 deploy_wrapper_script() {
@@ -595,7 +735,7 @@ main() {
   debug "Application binary symlink processed."
 
   deploy_wrapper_script
-  setup_python_venv "$PYTHON_VENV_PATH" "$SOURCE_VERSIONED_WHEEL_FILE_PATH" "$APP_USER" "$APP_GROUP"
+  setup_python_venv "$PYTHON_VENV_PATH" "$VERSIONED_DATAMOVER_WHEEL_FILENAME" "$APP_USER" "$APP_GROUP"
   deploy_systemd_units
   deploy_application_configs
   save_environment_variables_file
