@@ -34,6 +34,10 @@ class OpenFileCallable(Protocol):
     ) -> ContextManager[IO]: ...
 
 
+class UnlinkCallable(Protocol):
+    def __call__(self, path: PathLike, *, missing_ok: bool = False) -> None: ...
+
+
 def _default_os_stat(path: PathLike) -> os.stat_result:
     return os.stat(str(path))
 
@@ -46,7 +50,6 @@ def _default_exists(path: PathLike) -> bool:
     return os.path.exists(str(path))
 
 
-# MODIFIED _default_open
 def _default_open(
     path: PathLike, mode: str, *, encoding: Optional[str] = None
 ) -> ContextManager[IO]:
@@ -55,6 +58,11 @@ def _default_open(
     Matches the built-in open() signature for mode and encoding.
     """
     return open(str(path), mode, encoding=encoding)
+
+
+def _default_unlink(path: PathLike, *, missing_ok: bool = False) -> None:
+    p = Path(path)
+    p.unlink(missing_ok=missing_ok)
 
 
 def _default_listdir(path: PathLike) -> list[str]:
@@ -119,8 +127,8 @@ class FS:
     stat: Callable[[PathLike], os.stat_result] = field(default=_default_os_stat)
     lstat: Callable[[PathLike], os.stat_result] = field(default=_default_os_lstat)
     exists: Callable[[PathLike], bool] = field(default=_default_exists)
-    # MODIFIED FS.open field to use the new Protocol
     open: OpenFileCallable = field(default=_default_open)
+    unlink: UnlinkCallable = field(default=_default_unlink)
     listdir: Callable[[PathLike], list[str]] = field(default=_default_listdir)
     path_abspath: Callable[[PathLike], str] = field(default=_default_abspath)
     is_dir: Callable[[PathLike], bool] = field(default=_default_isdir)

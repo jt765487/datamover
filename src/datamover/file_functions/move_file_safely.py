@@ -199,7 +199,7 @@ def move_file_safely_impl(
             )
 
         # --- 4. Success ---
-        logger.debug(  # Changed from DEBUG to INFO as per your new code
+        logger.debug(
             "Successfully moved '%s' to '%s'", resolved_source_path, final_dest_path
         )
         return final_dest_path
