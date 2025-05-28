@@ -26,13 +26,16 @@ move_poll_interval_seconds = 0.5
 # The stuck_active_file_timeout_seconds must be greater than the lost_timeout_seconds.
 
 # How often (in seconds) to scan the source directory for lost / broken files.
+# Match this to the pcap file generation rate.
 scanner_check_seconds = 15.0
 
 # How long (in seconds) to wait for a file to be considered "lost" and moved to the worker directory.
-lost_timeout_seconds = 90.0
+# This should be two cycles longer than the pcap file generation rate + 1 second.
+lost_timeout_seconds = 46.0
 
 # How long (in seconds) to wait for a file to be considered "broken" (e.g., if it is still being written to).
-stuck_active_file_timeout_seconds = 180.0
+# This should be greater than the pcap file generation rate - three cycles + 1 second.
+stuck_active_file_timeout_seconds = 61.0
 
 [Tailer]
 # How often (in seconds) to check the exit - leave at the default of 0.5 seconds.
