@@ -439,9 +439,30 @@ case "$ACTION_FLAG" in
 esac
 
 if [[ "$ACTION_FLAG" != "status" && "$ACTION_FLAG" != "logs" && "$ACTION_FLAG" != "logs-follow" ]]; then
+    # For modifying actions
     if [[ $FAIL_COUNT -eq 0 ]]; then
         SCRIPT_SUCCESSFUL=true
     else
-        SCRIPT_SUCCESSFUL=true
+        # One or more operations failed for this action
+        SCRIPT_SUCCESSFUL=false # More semantically correct
+        if [[ $? -eq 0 ]]; then
+            # If the last command in the action block succeeded, but FAIL_COUNT > 0,
+            # we must explicitly exit with a partial success code.
+            debug "FAIL_COUNT is $FAIL_COUNT, but last command succeeded. Overriding exit to PARTIAL_SUCCESS."
+            exit "$EXIT_CODE_PARTIAL_SUCCESS"
+        fi
+        # If $? is already non-zero, that will be the exit code picked up by the EXIT trap.
+    fi
+else
+    # For status/logs/logs-follow, SCRIPT_SUCCESSFUL is already set to true within their action blocks.
+    # If FAIL_COUNT > 0 (e.g., a unit not found during status),
+    # the run helper would have returned non-zero, and $? would reflect that,
+    # or if it was not the last command, FAIL_COUNT would be > 0 and $? could be 0.
+    # We need to ensure a PARTIAL_SUCCESS exit if FAIL_COUNT > 0 and $? is 0.
+    if [[ $FAIL_COUNT -gt 0 && $? -eq 0 ]]; then
+        debug "FAIL_COUNT is $FAIL_COUNT for info action, but last command succeeded. Overriding exit to PARTIAL_SUCCESS."
+        exit "$EXIT_CODE_PARTIAL_SUCCESS"
     fi
 fi
+# If we reach here and $? is 0 and FAIL_COUNT is 0, it's a full success (EXIT_CODE_SUCCESS).
+# If $? is non-zero, it's some other failure type, handled by the EXIT trap.
