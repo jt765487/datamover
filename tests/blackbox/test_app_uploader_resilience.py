@@ -234,8 +234,9 @@ class TestAppUploaderResilience:
                 record.levelno == logging.WARNING
                 and "Server error during upload attempt" in record.message
                 and pcap_filename in record.message
-                and "Retrying in" in record.message
-                and "(Status: 503)" in record.message
+                and "(Status: 503"
+                in record.message  # More specific to catch the status
+                and "Retrying in" in record.message  # Ensure it's a retry message
                 and record.name == "datamover.uploader.send_file_with_retries"
             ):
                 retry_log_count += 1

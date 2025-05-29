@@ -1,3 +1,5 @@
+from typing import Optional, Tuple
+
 import pytest
 import logging
 import stat
@@ -21,12 +23,15 @@ def test_safe_stat_success_regular_file(mock_fs: Mock):
     test_path = Path("/path/to/regular_file.dat")
     expected_inode = 54321
     expected_size = 5000
+
     mock_stat_res = create_mock_stat_attrs(
-        st_mode=stat.S_IFREG | 0o644, st_ino=expected_inode, st_size=expected_size
+        st_mode=stat.S_IFREG | 0o644,
+        st_ino=expected_inode,
+        st_size=expected_size,
     )
     mock_fs.lstat.return_value = mock_stat_res
 
-    result: tuple[int, int] | None = safe_stat(test_path, fs=mock_fs)
+    result: Optional[Tuple[int, int]] = safe_stat(test_path, fs=mock_fs)
 
     assert result == (expected_inode, expected_size)
     mock_fs.lstat.assert_called_once_with(test_path)
@@ -39,7 +44,7 @@ def test_safe_stat_fails_directory(mock_fs: Mock, caplog: pytest.LogCaptureFixtu
     mock_fs.lstat.return_value = mock_stat_res
 
     caplog.set_level(logging.DEBUG)
-    result: tuple[int, int] | None = safe_stat(test_path, fs=mock_fs)
+    result: Optional[Tuple[int, int]] = safe_stat(test_path, fs=mock_fs)
 
     assert result is None
     mock_fs.lstat.assert_called_once_with(test_path)
@@ -77,7 +82,7 @@ def test_safe_stat_fails_os_error(
     mock_fs.lstat.side_effect = error_instance
 
     caplog.set_level(logging.INFO)
-    result: tuple[int, int] | None = safe_stat(test_path, fs=mock_fs)
+    result: Optional[Tuple[int, int]] = safe_stat(test_path, fs=mock_fs)
 
     assert result is None
     mock_fs.lstat.assert_called_once_with(test_path)
@@ -95,13 +100,13 @@ def test_safe_stat_fails_os_error(
 
 def test_safe_stat_fails_unexpected_error(
     mock_fs: Mock, caplog: pytest.LogCaptureFixture
-):
-    """Verify safe_stat returns None when lstat raises unexpected Exception."""
+) -> None:
+    """Verify safe_stat returns None when lstat raises an unexpected Exception."""
     test_path = Path("/path/to/unexpected")
     unexpected_err = ValueError("Something weird happened")
     mock_fs.lstat.side_effect = unexpected_err
 
-    caplog.set_level(logging.ERROR)  # SUT's logger.exception logs at ERROR
+    caplog.set_level(logging.ERROR)
     result = safe_stat(test_path, fs=mock_fs)
 
     assert result is None
@@ -111,10 +116,14 @@ def test_safe_stat_fails_unexpected_error(
         caplog, logging.ERROR, [str(test_path), "Unexpected error"]
     )
     assert log_entry is not None
-    assert log_entry.exc_info is not None
-    assert log_entry.exc_info[0] is ValueError
-    assert log_entry.exc_info[1] is unexpected_err
 
-    # Check if the string of the original error is in the formatted traceback/exception text
-    assert log_entry.exc_text is not None  # Good to check it exists
+    # Unpack the exc_info tuple instead of indexing to satisfy mypy
+    assert log_entry.exc_info is not None
+    exc_type, exc_val, exc_tb = log_entry.exc_info
+
+    assert exc_type is ValueError
+    assert exc_val is unexpected_err
+
+    # Verify the original error message appears in the logged traceback text
+    assert log_entry.exc_text is not None
     assert str(unexpected_err) in log_entry.exc_text

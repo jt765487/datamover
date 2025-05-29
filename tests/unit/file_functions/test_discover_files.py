@@ -121,7 +121,7 @@ class TestDiscoverFiles:
                     "fifo.pipe": stat.S_IFIFO,
                 }
                 return create_mock_stat_attrs(st_mode=mode_map[name], st_ino=hash(name))
-            pytest.fail(f"Unexpected lstat path: {path}")
+            assert False, f"Unexpected lstat path: {path}"
 
         mock_fs.lstat.side_effect = lstat_side_effect
         expected = {discovery_base_dir / "reg.file"}
@@ -209,7 +209,8 @@ class TestDiscoverFiles:
                 and error_file_path.name in record.message
             ):
                 assert record.exc_info is not None
-                assert isinstance(record.exc_info[1], ValueError)
+                _, exc_val, _ = record.exc_info
+                assert isinstance(exc_val, ValueError)
                 found_log_from_safe_stat = True
             # Log from discover_files.py's inner generic exception handler
             if (
@@ -219,9 +220,8 @@ class TestDiscoverFiles:
                 in record.message
             ):
                 assert record.exc_info is not None
-                assert isinstance(
-                    record.exc_info[1], ValueError
-                )  # If safe_stat re-raised it.
+                _, exc_val, _ = record.exc_info
+                assert isinstance(exc_val, ValueError)  # If safe_stat re-raised it.
 
         assert found_log_from_safe_stat, (
             "Expected logger.exception log from safe_stat not found for generic_error.file"
@@ -260,7 +260,8 @@ class TestDiscoverFiles:
                 in record.message
             ):
                 assert record.exc_info is not None  # logger.exception sets exc_info
-                assert isinstance(record.exc_info[1], RuntimeError)
+                _, exc_val, _ = record.exc_info
+                assert isinstance(exc_val, RuntimeError)
                 found_log = True
                 break
         assert found_log, "Expected logger.exception log not found for listdir failure"

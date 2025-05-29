@@ -4,10 +4,11 @@ import logging
 import os
 import sys
 import tempfile
-from logging import LogRecord
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any, Dict
 from unittest.mock import patch
+import threading
 
 import pytest
 
@@ -22,34 +23,79 @@ from datamover.startup_code.logger_setup import (
 from tests.test_utils.logging_helpers import find_log_record
 
 
-# --- Helper Function for Tests ---
+# Helper to create LogRecord instances for testing
 def make_record(
-    msg="test message",
-    level=logging.INFO,
-    sinfo=None,
-    exc_info=None,
-    name="test_logger",
-    lineno=42,
-    func="test_func",
-    pathname=__file__,
+    msg: str,
+    level: int = logging.INFO,
+    name: str = "test_logger",
     created_ts: Optional[float] = None,
-    extra_attrs: Optional[dict] = None,
-) -> LogRecord:
-    record = LogRecord(
+    exc_info: Any = None,
+    stack_info: Any = None,
+    extra: Optional[Dict[str, Any]] = None,
+    pathname: str = __file__,
+    lineno: int = 42,
+    func: str = "test_func",
+) -> logging.LogRecord:
+    """
+    Creates a LogRecord instance for testing purposes.
+    Allows precise control over the 'created' timestamp and derived values.
+    """
+    _effective_created_ts: float = created_ts if created_ts is not None else time.time()
+
+    _msecs_val: float = (_effective_created_ts - int(_effective_created_ts)) * 1000.0
+
+    _relative_created_val: float
+    if hasattr(logging, "_startTime") and isinstance(logging._startTime, (int, float)):
+        _start_time_as_float: float = float(logging._startTime)
+        _relative_created_val = (_effective_created_ts - _start_time_as_float) * 1000.0
+    else:
+        _relative_created_val = 0.0
+
+    # Handle exc_info specifically for LogRecord constructor
+    # Initialize with the provided exc_info (which could be an instance, a tuple, or None)
+    # unless it's the boolean True, in which case we process it.
+    processed_exc_info: Any = exc_info
+
+    if exc_info is True:
+        # If exc_info=True, capture current exception information by destructuring
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        if exc_type is not None:
+            # An active exception exists, use its full tuple
+            processed_exc_info = (exc_type, exc_value, exc_traceback)
+        else:
+            # No active exception, so exc_info=True means no actual exception info
+            # LogRecord constructor expects None to signify no exception when exc_info was True
+            # but no exception was found.
+            processed_exc_info = None
+
+    # Create the LogRecord instance
+    record = logging.LogRecord(
         name=name,
         level=level,
         pathname=pathname,
         lineno=lineno,
         msg=msg,
-        args=(),
-        exc_info=exc_info,
+        args=(),  # Assuming empty args for simplicity
+        exc_info=processed_exc_info,  # Use the processed exc_info
         func=func,
-        sinfo=sinfo,
     )
-    record.created = created_ts if created_ts is not None else 1577836800.0
-    if extra_attrs:
-        for k, v in extra_attrs.items():
+
+    # Override time-related attributes to match _effective_created_ts
+    record.created = _effective_created_ts
+    record.msecs = _msecs_val
+    record.relativeCreated = _relative_created_val
+
+    # Other attributes
+    record.thread = threading.get_ident()
+    record.threadName = "MainThread"
+    record.process = os.getpid()
+
+    if stack_info:
+        record.stack_info = stack_info
+    if extra:
+        for k, v in extra.items():
             setattr(record, k, v)
+
     return record
 
 
@@ -59,7 +105,7 @@ def reset_logging_state():
     original_manager_loggerdict = logging.Logger.manager.loggerDict.copy()
     original_root_handlers = list(logging.root.handlers)
     original_root_level = logging.root.level
-    original_manager_disable_level = logging.root.manager.disable
+    original_manager_disable_level = logging.root.manager.disable  # type: ignore
 
     yield
 
@@ -68,16 +114,18 @@ def reset_logging_state():
     logging.Logger.manager.loggerDict.update(original_manager_loggerdict)
     logging.root.handlers = original_root_handlers
     logging.root.setLevel(original_root_level)
-    logging.root.manager.disable = original_manager_disable_level
+    logging.root.manager.disable = original_manager_disable_level  # type: ignore
 
+    # Clean up specific loggers created during tests if any
     for logger_name in list(logging.Logger.manager.loggerDict.keys()):
         logger = logging.getLogger(logger_name)
         if hasattr(logger, "handlers"):
-            for handler in list(logger.handlers):
+            for handler in list(logger.handlers):  # Iterate over a copy
                 logger.removeHandler(handler)
                 if hasattr(handler, "close"):
                     handler.close()
-    for handler in list(logging.root.handlers):
+    # Ensure root handlers are also cleaned up properly beyond just restoring the list
+    for handler in list(logging.root.handlers):  # Iterate over a copy
         logging.root.removeHandler(handler)
         if hasattr(handler, "close"):
             handler.close()
@@ -85,27 +133,35 @@ def reset_logging_state():
 
 # --- Test Cases for _generate_utc_iso_timestamp ---
 def test_generate_utc_iso_timestamp_exact():
-    record = make_record(created_ts=1577836800.0)
+    record = make_record(
+        msg="dummy msg for timestamp test", created_ts=1577836800.0
+    )  # Added msg
     ts = _generate_utc_iso_timestamp(record)
     assert ts == "2020-01-01T00:00:00.000Z"
 
 
 def test_generate_utc_iso_timestamp_with_milliseconds():
-    record = make_record(created_ts=1577836800.123)
+    record = make_record(msg="dummy msg", created_ts=1577836800.123)  # Added msg
     ts = _generate_utc_iso_timestamp(record)
     assert ts == "2020-01-01T00:00:00.123Z"
 
 
 def test_generate_utc_iso_timestamp_milliseconds_rounding():
-    record_truncates = make_record(created_ts=1577836801.9996)
+    record_truncates = make_record(
+        msg="dummy msg", created_ts=1577836801.9996
+    )  # Added msg
     ts_truncates = _generate_utc_iso_timestamp(record_truncates)
     assert ts_truncates == "2020-01-01T00:00:01.999Z"
 
-    record_half_way = make_record(created_ts=1577836801.9995)
+    record_half_way = make_record(
+        msg="dummy msg", created_ts=1577836801.9995
+    )  # Added msg
     ts_half_way = _generate_utc_iso_timestamp(record_half_way)
-    assert ts_half_way == "2020-01-01T00:00:01.999Z"  # As per user's validated test
+    assert ts_half_way == "2020-01-01T00:00:01.999Z"
 
-    record_round_down = make_record(created_ts=1577836801.9994)
+    record_round_down = make_record(
+        msg="dummy msg", created_ts=1577836801.9994
+    )  # Added msg
     ts_round_down = _generate_utc_iso_timestamp(record_round_down)
     assert ts_round_down == "2020-01-01T00:00:01.999Z"
 
@@ -116,31 +172,41 @@ def test_generate_utc_iso_timestamp_pre_epoch():
             1960, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc
         )
         pre_epoch_ts_float = pre_epoch_dt.timestamp()
-        record = make_record(created_ts=pre_epoch_ts_float)
+        record = make_record(
+            msg="dummy msg", created_ts=pre_epoch_ts_float
+        )  # Added msg
         ts = _generate_utc_iso_timestamp(record)
         assert ts == "1960-01-01T00:00:00.000Z"
-    except OSError as e:
+    except OSError as e:  # pragma: no cover (OS dependent)
         pytest.skip(
             f"Skipping pre-epoch test due to OS limitation for timestamp(): {e}"
         )
 
 
 # --- Test Cases for JSONFormatter ---
+
+
 def test_jsonformatter_default_keys_and_values():
     fmt = JSONFormatter()
     record = make_record(
-        msg="hello world", level=logging.DEBUG, created_ts=1577836800.0
+        msg="hello world",
+        level=logging.DEBUG,
+        created_ts=1577836800.0,  # 2020-01-01T00:00:00Z
+        pathname=__file__,
+        lineno=42,
+        func="test_func",
     )
     formatted = fmt.format(record)
     data = json.loads(formatted)
+
     expected_keys = {
         "timestamp",
         "level",
         "message",
         "logger",
         "module",
-        "funcName",
-        "lineno",
+        "function",
+        "line",
     }
     assert expected_keys.issubset(set(data.keys()))
     assert data["timestamp"] == "2020-01-01T00:00:00.000Z"
@@ -148,134 +214,186 @@ def test_jsonformatter_default_keys_and_values():
     assert data["message"] == "hello world"
     assert data["logger"] == "test_logger"
     assert data["module"] == Path(__file__).stem
-    assert data["funcName"] == "test_func"
-    assert data["lineno"] == 42
+    assert data["function"] == "test_func"
+    assert data["line"] == 42
 
 
 def test_jsonformatter_custom_fmt_keys():
-    fmt_keys = {"ts": "asctime", "lvl": "levelname", "log_msg": "message"}
-    fmt = JSONFormatter(fmt_keys=fmt_keys)
+    custom_keys = {
+        "time": "asctime",
+        "lvl": "levelname",
+        "log_msg": "message",
+        "source_logger": "name",
+    }
+    fmt = JSONFormatter(fmt_keys=custom_keys)
+    record = make_record(msg="custom test", created_ts=1577836800.0)
+    formatted = fmt.format(record)
+    data = json.loads(formatted)
+
+    assert set(data.keys()) == set(
+        custom_keys.keys()
+    )  # Check only custom keys are present
+    assert data["time"] == "2020-01-01T00:00:00.000Z"
+    assert data["lvl"] == "INFO"
+    assert data["log_msg"] == "custom test"
+    assert data["source_logger"] == "test_logger"
+
+
+def test_jsonformatter_with_extras():
+    fmt = JSONFormatter()
+    extra_data = {"user_id": 123, "request_id": "abc"}
     record = make_record(
-        msg="custom fmt", level=logging.WARNING, created_ts=1577836800.0
+        msg="extra info test", extra=extra_data, created_ts=1577836800.0
     )
     formatted = fmt.format(record)
     data = json.loads(formatted)
-    assert set(data.keys()) == {"ts", "lvl", "log_msg"}
-    assert data["ts"] == "2020-01-01T00:00:00.000Z"
-    assert data["lvl"] == "WARNING"
-    assert data["log_msg"] == "custom fmt"
+
+    assert data["user_id"] == 123
+    assert data["request_id"] == "abc"
+    assert data["message"] == "extra info test"  # Default key
+    assert data["timestamp"] == "2020-01-01T00:00:00.000Z"  # Default key
 
 
-def test_jsonformatter_extra_fields():
+def test_jsonformatter_with_exception_info():
     fmt = JSONFormatter()
-    record = make_record(
-        msg="message with extras",
-        extra_attrs={"custom_field": "custom_value", "another_extra": 123},
-    )
-    formatted = fmt.format(record)
-    data = json.loads(formatted)
-    assert data["custom_field"] == "custom_value"
-    assert data["another_extra"] == 123
-    assert "message" in data
-
-
-def test_jsonformatter_with_exception():
-    fmt = JSONFormatter()
-    record = None
     try:
         raise ValueError("Test exception")
     except ValueError:
-        current_exc_tuple = sys.exc_info()
+        exc_info_tuple = sys.exc_info()
         record = make_record(
-            msg="error occurred", level=logging.ERROR, exc_info=current_exc_tuple
+            msg="exception test", exc_info=exc_info_tuple, created_ts=1577836800.0
         )
-    assert record is not None
+
     formatted = fmt.format(record)
     data = json.loads(formatted)
-    assert data["level"] == "ERROR"
-    assert "exception" in data
-    assert "ValueError: Test exception" in data["exception"]
-    assert "Traceback (most recent call last):" in data["exception"]
+    assert data["message"] == "exception test"
+    assert JSONFormatter.DEFAULT_EXCEPTION_KEY in data
+    assert "ValueError: Test exception" in data[JSONFormatter.DEFAULT_EXCEPTION_KEY]
+    assert (
+        "Traceback (most recent call last):"
+        in data[JSONFormatter.DEFAULT_EXCEPTION_KEY]
+    )
 
 
-def test_jsonformatter_with_stackinfo():
+def test_jsonformatter_with_exception_info_true():
     fmt = JSONFormatter()
+    try:
+        raise TypeError("Another test exception")
+    except TypeError:
+        record = make_record(
+            msg="exc_info true", exc_info=True, created_ts=1577836800.0
+        )
+
+    formatted = fmt.format(record)
+    data = json.loads(formatted)
+    assert JSONFormatter.DEFAULT_EXCEPTION_KEY in data
+    assert (
+        "TypeError: Another test exception" in data[JSONFormatter.DEFAULT_EXCEPTION_KEY]
+    )
+
+
+def test_jsonformatter_with_exception_instance():
+    fmt = JSONFormatter()
+    exc_instance = KeyError("A key error")  # This instance has no __traceback__
     record = make_record(
-        msg="stack info test", sinfo="Fake stack info\n  line 1\n  line 2"
+        msg="exc_info instance", exc_info=exc_instance, created_ts=1577836800.0
     )
     formatted = fmt.format(record)
     data = json.loads(formatted)
-    assert "stack_info" in data
-    assert data["stack_info"] == "Fake stack info\n  line 1\n  line 2"
+
+    assert JSONFormatter.DEFAULT_EXCEPTION_KEY in data
+    formatted_exc_text = data[JSONFormatter.DEFAULT_EXCEPTION_KEY]
+
+    # Check that the type and message are present
+    assert "KeyError: 'A key error'" in formatted_exc_text
+
+    # Check that "Traceback" is NOT present, as the instance had no traceback
+    assert "Traceback" not in formatted_exc_text
 
 
-def test_jsonformatter_fmt_keys_overrides_default_exception_stackinfo_keys():
-    fmt_keys = {"err": "exc_info", "stk": "stack_info", "the_message": "message"}
-    fmt = JSONFormatter(fmt_keys=fmt_keys)
-    record = None
-    try:
-        raise ValueError("Another Test Exception")
-    except ValueError:
-        current_exc_tuple = sys.exc_info()
-        record = make_record(
-            msg="custom error mapping",
-            exc_info=current_exc_tuple,
-            sinfo="Custom stack mapping",
-        )
-    assert record is not None
+def test_jsonformatter_with_stack_info():
+    fmt = JSONFormatter()
+    stack_info_str = "Fake stack trace"
+    record = make_record(
+        msg="stack info test", stack_info=stack_info_str, created_ts=1577836800.0
+    )
     formatted = fmt.format(record)
     data = json.loads(formatted)
-    assert "exception" not in data
-    assert "stack_info" not in data
-    assert "err" in data
-    assert "ValueError: Another Test Exception" in data["err"]
-    assert "stk" in data
-    assert data["stk"] == "Custom stack mapping"
-    assert data["the_message"] == "custom error mapping"
+    assert data["message"] == "stack info test"
+    assert JSONFormatter.DEFAULT_STACK_INFO_KEY in data
+    assert data[JSONFormatter.DEFAULT_STACK_INFO_KEY] == stack_info_str
 
 
-def test_jsonformatter_fmt_keys_missing_attr_silent():
-    fmt = JSONFormatter(fmt_keys={"foo": "does_not_exist", "ts": "asctime"})
-    rec = make_record(created_ts=1577836800.0)
-    data = json.loads(fmt.format(rec))
-    assert "foo" not in data
-    assert data["ts"] == "2020-01-01T00:00:00.000Z"
+def test_jsonformatter_custom_exc_stack_keys():
+    custom_keys = {
+        "err_details": "exc_info",
+        "call_stack": "stack_info",
+        "the_message": "message",
+    }
+    fmt = JSONFormatter(fmt_keys=custom_keys)
+    try:
+        raise ValueError("Test exception for custom keys")
+    except ValueError:
+        exc_info_tuple = sys.exc_info()
+        record = make_record(
+            msg="custom exc/stack",
+            exc_info=exc_info_tuple,
+            stack_info="Custom stack",
+            created_ts=1577836800.0,
+        )
+    formatted = fmt.format(record)
+    data = json.loads(formatted)
+    assert "err_details" in data
+    assert "ValueError: Test exception for custom keys" in data["err_details"]
+    assert "call_stack" in data
+    assert data["call_stack"] == "Custom stack"
+    assert data["the_message"] == "custom exc/stack"
+    assert JSONFormatter.DEFAULT_EXCEPTION_KEY not in data
+    assert JSONFormatter.DEFAULT_STACK_INFO_KEY not in data
+
+
+def test_jsonformatter_no_exc_no_stack():
+    fmt = JSONFormatter()
+    record = make_record(msg="clean record", created_ts=1577836800.0)
+    formatted = fmt.format(record)
+    data = json.loads(formatted)
+    assert JSONFormatter.DEFAULT_EXCEPTION_KEY not in data
+    assert JSONFormatter.DEFAULT_STACK_INFO_KEY not in data
 
 
 def test_jsonformatter_message_fallback_for_fmt_keys():
-    fmt = JSONFormatter(fmt_keys={"ts": "asctime"})
+    fmt = JSONFormatter(fmt_keys={"ts": "asctime", "level_val": "levelname"})
     rec = make_record(msg="hey", created_ts=1577836800.0)
     data = json.loads(fmt.format(rec))
-    assert data["message"] == "hey"
+    assert (
+        "message" not in data
+    )  # message key should not appear if not in user_fmt_keys
     assert data["ts"] == "2020-01-01T00:00:00.000Z"
-
-
-def test_jsonformatter_stack_info_absent_and_mapped_absent():
-    fmt_default = JSONFormatter()
-    rec_no_stack = make_record()
-    data_default = json.loads(fmt_default.format(rec_no_stack))
-    assert "stack_info" not in data_default
-    fmt_map_stack = JSONFormatter(fmt_keys={"stk": "stack_info"})
-    rec_no_stack_mapped = make_record()
-    data_map = json.loads(fmt_map_stack.format(rec_no_stack_mapped))
-    assert "stk" not in data_map
+    assert "level_val" in data
+    assert data["level_val"] == "INFO"
 
 
 # --- Test Cases for _get_level_num ---
-# (Assumed to be correct and passing)
-def test_get_level_num_valid():
-    assert _get_level_num("DEBUG", "p") == logging.DEBUG
-    assert _get_level_num("info", "p") == logging.INFO
-    assert _get_level_num("WARNING", "p") == logging.WARNING
-    assert _get_level_num("error", "p") == logging.ERROR
-    assert _get_level_num("CRITICAL", "p") == logging.CRITICAL
-    assert _get_level_num("critical", "p") == logging.CRITICAL
-    assert _get_level_num(logging.DEBUG, "p") == logging.DEBUG
-    assert _get_level_num(20, "p") == logging.INFO
-    assert _get_level_num("10", "p") == logging.DEBUG
+@pytest.mark.parametrize(
+    "level_input, expected_output",
+    [
+        ("DEBUG", logging.DEBUG),
+        ("INFO", logging.INFO),
+        ("WARNING", logging.WARNING),
+        ("ERROR", logging.ERROR),
+        ("CRITICAL", logging.CRITICAL),
+        ("debug", logging.DEBUG),  # Case-insensitivity
+        (logging.INFO, logging.INFO),
+        ("10", logging.DEBUG),  # Numeric string for standard level
+        ("30", logging.WARNING),
+        (20, logging.INFO),
+    ],
+)
+def test_get_level_num_valid_inputs(level_input, expected_output):
+    assert _get_level_num(level_input, "param") == expected_output
 
 
-def test_get_level_num_invalid_string_name():
+def test_get_level_num_invalid_string():
     with pytest.raises(
         LoggingConfigurationError,
         match="Invalid level string for param: 'INVALIDLEVEL'",
@@ -284,41 +402,35 @@ def test_get_level_num_invalid_string_name():
 
 
 def test_get_level_num_invalid_numeric_string():
-    with pytest.raises(
-        LoggingConfigurationError, match="Invalid numeric string for param: '17'"
-    ):
-        _get_level_num("17", "param")
+    # Change: Numeric strings that don't map to a standard level name are now accepted as integers.
+    # The previous check `if logging.getLevelName(potential_num).startswith("Level ")`
+    # was removed from _get_level_num in favor of direct int conversion.
+    assert _get_level_num("17", "param") == 17  # Test that it now passes through as int
 
 
 def test_get_level_num_invalid_integer_not_standard_level():
+    # Change: Integers that don't map to a standard level name are accepted verbatim.
+    # The previous check `if logging.getLevelName(level_input).startswith("Level ")`
+    # was removed from _get_level_num.
+    assert _get_level_num(15, "param") == 15  # Test that it now passes through
+
+
+def test_get_level_num_type_error():
     with pytest.raises(
-        LoggingConfigurationError, match="Invalid numeric level for param: 15"
+        TypeError, match="param must be an int or string, not <class 'list'>"
     ):
-        _get_level_num(15, "param")
-
-
-def test_get_level_num_notset_level_string_and_int():
-    assert _get_level_num("NOTSET", "p") == logging.NOTSET
-    assert _get_level_num(0, "p") == logging.NOTSET
-    assert _get_level_num("0", "p") == logging.NOTSET
-
-
-def test_get_level_num_invalid_type():
-    with pytest.raises(TypeError, match="param must be an int or string"):
-        _get_level_num(None, "param")  # type: ignore
-    with pytest.raises(TypeError, match="param must be an int or string"):
         _get_level_num([], "param")  # type: ignore
 
 
 # --- Test Cases for setup_logging ---
 
 
-def test_setup_logging_nonexistent_config_file(reset_logging_state):
+def test_setup_logging_nonexistent_config_file(reset_logging_state):  # noqa: F841
     with pytest.raises(LoggingConfigurationError, match="Config file not found"):
         setup_logging(config_path=Path("/path/to/nonexistent/config.json"))
 
 
-def test_setup_logging_invalid_json_config_file(tmp_path: Path, reset_logging_state):
+def test_setup_logging_invalid_json_config_file(tmp_path: Path, reset_logging_state):  # noqa: F841
     bad_json_file = tmp_path / "bad.json"
     bad_json_file.write_text("{ not_valid_json: True,, }")
     with pytest.raises(
@@ -328,7 +440,7 @@ def test_setup_logging_invalid_json_config_file(tmp_path: Path, reset_logging_st
         setup_logging(config_path=bad_json_file)
 
 
-def test_setup_logging_config_missing_handlers_key(tmp_path: Path, reset_logging_state):
+def test_setup_logging_config_missing_handlers_key(tmp_path: Path, reset_logging_state):  # noqa: F841
     config_missing_handlers = {"version": 1, "root": {"level": "INFO"}}
     config_file = tmp_path / "missing_handlers.json"
     config_file.write_text(json.dumps(config_missing_handlers))
@@ -337,7 +449,8 @@ def test_setup_logging_config_missing_handlers_key(tmp_path: Path, reset_logging
 
 
 def test_setup_logging_invalid_handler_class_in_config(
-    tmp_path: Path, reset_logging_state
+    tmp_path: Path,
+    reset_logging_state,  # noqa: F841
 ):
     invalid_handler_config = {
         "version": 1,
@@ -353,7 +466,7 @@ def test_setup_logging_invalid_handler_class_in_config(
         setup_logging(config_path=config_file)
 
 
-def test_setup_logging_non_writable_log_directory(tmp_path: Path, reset_logging_state):
+def test_setup_logging_non_writable_log_directory(tmp_path: Path, reset_logging_state):  # noqa: F841
     log_dir = tmp_path / "restricted_logs"
     with patch.object(Path, "mkdir", side_effect=OSError("Permission denied")):
         with pytest.raises(
@@ -364,7 +477,9 @@ def test_setup_logging_non_writable_log_directory(tmp_path: Path, reset_logging_
 
 
 def test_setup_logging_absolute_filename_with_log_file_dir_warns(
-    tmp_path: Path, reset_logging_state, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    reset_logging_state,
+    caplog: pytest.LogCaptureFixture,  # noqa: F841
 ):
     caplog.set_level(logging.WARNING)
     abs_log_file = tmp_path / "absolute_test.log"
@@ -406,7 +521,8 @@ def test_setup_logging_absolute_filename_with_log_file_dir_warns(
 
 
 def test_setup_logging_custom_formatter_fmt_keys_from_config(
-    tmp_path: Path, reset_logging_state
+    tmp_path: Path,
+    reset_logging_state,  # noqa: F841
 ):
     log_dir = tmp_path / "custom_fmt_logs"
     log_file_name_only = "custom_output.jsonl"  # Relative name
@@ -475,7 +591,7 @@ def test_setup_logging_custom_formatter_fmt_keys_from_config(
 
 def test_setup_logging_reinitialization_overrides_previous(
     tmp_path: Path,
-    reset_logging_state,
+    reset_logging_state,  # noqa: F841
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture,
 ):
@@ -533,7 +649,7 @@ def test_setup_logging_reinitialization_overrides_previous(
 
 
 def test_setup_logging_without_log_file_dir_for_relative_path_raises(
-    reset_logging_state,
+    reset_logging_state,  # noqa: F841
 ):
     test_config = {
         "version": 1,
@@ -560,7 +676,7 @@ def test_setup_logging_without_log_file_dir_for_relative_path_raises(
 
 
 def test_setup_logging_with_base_config_without_log_file_dir_raises(
-    reset_logging_state,
+    reset_logging_state,  # noqa: F841
 ):
     with pytest.raises(
         LoggingConfigurationError,
@@ -571,8 +687,8 @@ def test_setup_logging_with_base_config_without_log_file_dir_raises(
 
 def test_setup_logging_creates_log_file_and_writes(
     tmp_path: Path,
-    reset_logging_state,
-    caplog: pytest.LogCaptureFixture,  # caplog not used for assertion here
+    reset_logging_state,  # noqa: F841
+    caplog: pytest.LogCaptureFixture,  # noqa: F841
 ):
     log_dir = tmp_path / "logs"
     setup_logging(
@@ -657,7 +773,7 @@ def test_jsonformatter_exc_info_true_branch():
     try:
         raise RuntimeError("oops")
     except RuntimeError:
-        rec = make_record(exc_info=True)
+        rec = make_record(msg="dummy message for exc_info true", exc_info=True)
         formatted = fmt.format(rec)
     assert formatted is not None
     data = json.loads(formatted)

@@ -110,7 +110,6 @@ def test_gather_only_regular_files(scan_dir: Path, mock_fs: MagicMock):
     mock_fs.scandir.return_value.__enter__.return_value = iter([entry1, entry2])
 
     # Mock fs.resolve to return a predictable path
-    # (entry.path is str, fs.resolve expects PathLike)
     resolved_path1 = scan_dir / "resolved_file1.txt"
     resolved_path2 = scan_dir / "resolved_file2.dat"
     mock_fs.resolve.side_effect = (
@@ -122,20 +121,26 @@ def test_gather_only_regular_files(scan_dir: Path, mock_fs: MagicMock):
     # Act
     result = gather_file_data(scan_dir, mock_fs)
 
-    # Assert
+    # Assert count
     assert len(result) == 2
-    expected_data = [
-        GatheredEntryData(mtime=100.0, size=1024, path=resolved_path1),
-        GatheredEntryData(mtime=200.0, size=2048, path=resolved_path2),
-    ]
-    # Order might not be guaranteed by scandir, so compare sets or sort
-    assert sorted(result) == sorted(expected_data)
 
+    # Build simple comparable tuples
+    result_tuples = [(str(e.path), e.mtime, e.size) for e in result]
+    expected_tuples = [
+        (str(resolved_path1), 100.0, 1024),
+        (str(resolved_path2), 200.0, 2048),
+    ]
+
+    # Now both are List[tuple[str, float, int]] and can be sorted without mypy errors
+    assert sorted(result_tuples) == sorted(expected_tuples)
+
+    # Verify that only regular-file entries were checked
     entry1.is_file.assert_called_once_with(follow_symlinks=False)
     entry1.stat.assert_called_once_with(follow_symlinks=False)
     entry2.is_file.assert_called_once_with(follow_symlinks=False)
     entry2.stat.assert_called_once_with(follow_symlinks=False)
 
+    # And resolution was attempted on each path
     mock_fs.resolve.assert_has_calls(
         [
             call(Path(entry1.path), strict=False),
@@ -155,7 +160,7 @@ def test_gather_mixed_entries(scan_dir: Path, mock_fs: MagicMock):
     )
     symlink_entry = make_mock_dir_entry(
         "link.txt", scan_dir, is_file_result=False, is_symlink_result=True
-    )  # is_file(follow_symlinks=False) would be false for a link itself
+    )
 
     mock_fs.scandir.return_value.__enter__.return_value = iter(
         [file_entry, dir_entry, symlink_entry]
@@ -166,21 +171,25 @@ def test_gather_mixed_entries(scan_dir: Path, mock_fs: MagicMock):
     # Act
     result = gather_file_data(scan_dir, mock_fs)
 
-    # Assert
+    # Assert we got exactly one item
     assert len(result) == 1
-    assert result[0] == GatheredEntryData(
+
+    # Unpack it instead of indexing
+    (only_entry,) = result
+    assert only_entry == GatheredEntryData(
         mtime=100.0, size=1024, path=resolved_file_path
     )
 
+    # And the usual call‐count verifications
     file_entry.is_file.assert_called_once_with(follow_symlinks=False)
     file_entry.stat.assert_called_once_with(follow_symlinks=False)
     mock_fs.resolve.assert_called_once_with(Path(file_entry.path), strict=False)
 
     dir_entry.is_file.assert_called_once_with(follow_symlinks=False)
-    dir_entry.stat.assert_not_called()  # Should not be called if not a file
+    dir_entry.stat.assert_not_called()
 
     symlink_entry.is_file.assert_called_once_with(follow_symlinks=False)
-    symlink_entry.stat.assert_not_called()  # Should not be called if not a file
+    symlink_entry.stat.assert_not_called()
 
 
 # --- Tests for fs.scandir raising errors ---
@@ -351,8 +360,9 @@ def test_entry_errors_are_logged_and_skipped(
                 # Check if the original exception type matches if exc_info is expected
                 if expect_exc_info:
                     assert record.exc_info is not None, "Expected exc_info to be logged"
-                    assert isinstance(record.exc_info[1], type(exception_type)), (
-                        f"Logged exception type mismatch. Got {type(record.exc_info[1])}, expected {type(exception_type)}"
+                    _, logged_exc, _ = record.exc_info
+                    assert isinstance(logged_exc, type(exception_type)), (
+                        f"Logged exception type mismatch. Got {type(logged_exc)}, expected {type(exception_type)}"
                     )
                 else:
                     assert record.exc_info is None, "Expected exc_info to be None"

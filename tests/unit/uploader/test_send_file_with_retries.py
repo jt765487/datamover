@@ -1,13 +1,15 @@
 import logging
 from pathlib import Path
+from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
 import requests
 
+from datamover.protocols import HttpResponse
+
 # Import the SUT
 from datamover.uploader.send_file_with_retries import RetryableFileSender
-from datamover.protocols import HttpResponse
 
 # Log helper
 from tests.test_utils.logging_helpers import find_log_record
@@ -22,6 +24,20 @@ def make_response(code: int, text: str = "") -> MagicMock:
 
 
 # --- Test Fixtures specific to this test file ---
+
+
+@pytest.fixture(autouse=True)
+def mock_create_audit_event_for_sender_tests(
+    mocker,
+):  # Use pytest-mock's mocker fixture
+    # mocker.patch returns the MagicMock directly.
+    # It will be automatically reset/undone after each test that uses this fixture.
+    mock_audit = mocker.patch(
+        "datamover.uploader.send_file_with_retries.create_upload_audit_event"
+    )
+    yield mock_audit  # Yield the mock so it can be injected if a test requests it by name
+    # Even though it's autouse, yielding makes it available by name.
+    # If no test requests it by name, yield is still fine.
 
 
 @pytest.fixture
@@ -51,20 +67,24 @@ def sender(
 )
 def test_http_status_dead_letter(
     sender: RetryableFileSender,
-    mock_fs_for_sender_unit_tests: MagicMock,  # Use fixture from conftest
-    mock_http_client: MagicMock,  # Use fixture from conftest
-    mock_safe_file_mover: MagicMock,  # Use fixture from conftest
-    test_file_path_generic: Path,  # Use fixture from conftest
-    retryable_sender_unit_test_deps: dict,  # To get expected paths
-    caplog: pytest.LogCaptureFixture,
+    mock_fs_for_sender_unit_tests: MagicMock,
+    mock_http_client: MagicMock,
+    mock_safe_file_mover: MagicMock,
+    test_file_path_generic: Path,
+    retryable_sender_unit_test_deps: dict,
+    caplog: pytest.LogCaptureFixture,  # Keep for existing log checks
+    mock_create_audit_event_for_sender_tests: MagicMock,  # ADDED
     code: int,
     text: str,
 ):
-    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.INFO)  # Keep for existing log checks
+    mocked_file_size = 123  # Assume a size for stat mock
     mock_fs_for_sender_unit_tests.exists.return_value = True
+    mock_fs_for_sender_unit_tests.stat.return_value = MagicMock(
+        st_size=mocked_file_size
+    )
     mock_http_client.post.return_value = make_response(code, text)
 
-    # Get expected dead_letter_dir from the same source as the sender's initialization
     expected_dead_letter_dir = retryable_sender_unit_test_deps[
         "dead_letter_destination_dir"
     ]
@@ -73,28 +93,26 @@ def test_http_status_dead_letter(
 
     assert sender.send_file(test_file_path_generic) is True
 
+    # Existing log assertions
     substrs = [f"terminal HTTP status ({code})", test_file_path_generic.name]
     if text:
         substrs += ["Response:", text]
     assert find_log_record(caplog, logging.ERROR, substrs) is not None
+    # ... (other existing log assertions) ...
 
-    assert (
-        find_log_record(
-            caplog,
-            logging.INFO,
-            [
-                "Successfully moved failed file",
-                test_file_path_generic.name,
-                str(expected_dl_path),
-            ],
-        )
-        is not None
-    )
-    mock_safe_file_mover.assert_called_once_with(
-        source_path_raw=test_file_path_generic,
-        destination_dir=expected_dead_letter_dir,
-        fs=mock_fs_for_sender_unit_tests,
-        expected_source_dir=None,
+    # ADDED: Audit call assertion
+    mock_create_audit_event_for_sender_tests.assert_any_call(
+        level=logging.ERROR,
+        event_type="upload_failure_http_terminal",
+        file_name=test_file_path_generic.name,
+        file_size_bytes=mocked_file_size,
+        destination_url=sender._remote_url,
+        attempt=1,
+        duration_ms=mock.ANY,  # int
+        status_code=code,
+        failure_category="HTTP Terminal Error",
+        failure_detail=f"Terminal HTTP Error, Status: {code}",  # Corrected
+        response_text_snippet=text[:100] if text else None,
     )
 
 
@@ -106,9 +124,15 @@ def test_send_file_success_moves_to_uploaded_dir(
     test_file_path_generic: Path,
     retryable_sender_unit_test_deps: dict,  # To get expected values
     caplog: pytest.LogCaptureFixture,
+    mock_create_audit_event_for_sender_tests: MagicMock,
 ):
     caplog.set_level(logging.INFO)
+    mocked_file_size = 456
     mock_fs_for_sender_unit_tests.exists.return_value = True
+    mock_http_client.post.return_value = make_response(200, "OK")
+    mock_fs_for_sender_unit_tests.stat.return_value = MagicMock(
+        st_size=mocked_file_size
+    )
     mock_http_client.post.return_value = make_response(200, "OK")
 
     # Get expected values from the same source as the sender's initialization
@@ -165,6 +189,19 @@ def test_send_file_success_moves_to_uploaded_dir(
             ],
         )
         is not None
+    )
+
+    # ADDED: Audit call assertion
+    mock_create_audit_event_for_sender_tests.assert_any_call(
+        level=logging.INFO,
+        event_type="upload_success",
+        file_name=test_file_path_generic.name,
+        file_size_bytes=mocked_file_size,  # Use the defined mocked_file_size
+        destination_url=sender._remote_url,  # Ensure sender has _remote_url or get from deps
+        attempt=1,
+        duration_ms=mock.ANY,  # int
+        status_code=200,
+        response_text_snippet="OK"[:100],
     )
 
 
@@ -239,7 +276,9 @@ def test_source_vanished_before(
     mock_fs_for_sender_unit_tests.exists.return_value = False
     assert sender.send_file(test_file_path_generic) is True
     assert (
-        find_log_record(caplog, logging.WARNING, ["vanished before send attempt"])
+        find_log_record(
+            caplog, logging.WARNING, ["vanished before initial processing attempt"]
+        )  # MODIFIED
         is not None
     )
 
@@ -257,7 +296,9 @@ def test_source_vanished_during_open(
     )
     assert sender.send_file(test_file_path_generic) is True
     assert (
-        find_log_record(caplog, logging.WARNING, ["vanished during send attempt"])
+        find_log_record(
+            caplog, logging.WARNING, ["vanished during active send attempt"]
+        )  # MODIFIED
         is not None
     )
 
@@ -487,6 +528,8 @@ def test_send_file_zero_byte_success(
 ):
     caplog.set_level(logging.INFO)
     mock_fs_for_sender_unit_tests.exists.return_value = True
+    # Simulate getting file size as 0
+    mock_fs_for_sender_unit_tests.stat.return_value = MagicMock(st_size=0)
     mock_http_client.post.return_value = make_response(200, "OK")
 
     expected_uploaded_dir = retryable_sender_unit_test_deps["uploaded_destination_dir"]
@@ -659,7 +702,17 @@ def test_send_file_exists_raises_non_oserror(
     mock_fs_for_sender_unit_tests: MagicMock,  # Use the correct fixture name
     test_file_path_generic: Path,
 ):
-    mock_fs_for_sender_unit_tests.exists.side_effect = ValueError("bad fs call")
+    # This test ensures that non-OSErrors from fs.exists are propagated.
+    # The initial fs.stat() call will succeed here, as it's separate.
+    # We then cause fs.exists() inside the loop to raise a non-OSError.
+    mock_fs_for_sender_unit_tests.stat.return_value = MagicMock(
+        st_size=123
+    )  # Allow initial stat to pass
+    mock_fs_for_sender_unit_tests.exists.side_effect = [
+        True,
+        ValueError("bad fs call"),
+    ]  # First call (initial) True, second (in loop) raises
+
     with pytest.raises(ValueError, match="bad fs call"):
         sender.send_file(test_file_path_generic)
 

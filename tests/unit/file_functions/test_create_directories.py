@@ -1,8 +1,9 @@
 import re
+from pathlib import Path
+from typing import Sequence
+from unittest.mock import patch, MagicMock, call
 
 import pytest
-from unittest.mock import patch, MagicMock, call
-from pathlib import Path
 
 from datamover.file_functions.create_directories import create_directories
 from datamover.startup_code.load_config import (
@@ -16,7 +17,7 @@ SOURCE_DIR_PATH = BASE_DIR_PATH / "source"
 UPLOADED_DIR_PATH = BASE_DIR_PATH / "uploaded"
 WORKER_DIR_PATH = BASE_DIR_PATH / "worker"
 
-ORDERED_OTHER_PATHS = sorted(
+ORDERED_OTHER_PATHS: Sequence[Path] = sorted(
     [
         SOURCE_DIR_PATH,
         WORKER_DIR_PATH,
@@ -26,7 +27,10 @@ ORDERED_OTHER_PATHS = sorted(
     ]
 )
 
-ALL_PATHS_IN_PROCESSING_ORDER = [BASE_DIR_PATH] + ORDERED_OTHER_PATHS
+ALL_PATHS_IN_PROCESSING_ORDER: list[Path] = [
+    BASE_DIR_PATH,
+    *ORDERED_OTHER_PATHS,
+]
 
 
 # Device IDs for mocking
@@ -163,7 +167,11 @@ def test_base_dir_does_not_exist_via_get_device(
     # Arrange
     get_device_error_msg = f"Path '{BASE_DIR_PATH}' does not exist."
 
-    def side_effect_for_get_device(path, fs):
+    def side_effect_for_get_device(path, **kwargs):
+        # grab it and use it at least once so mypy doesn’t complain
+        fs_arg = kwargs.get("fs")
+        assert fs_arg is mock_fs  # sanity-check that you really got your mock
+
         if path == BASE_DIR_PATH:
             raise ConfigError(get_device_error_msg)
         return DEVICE_ID_BASE
@@ -399,7 +407,11 @@ def test_other_dir_get_device_config_error(
 
     original_config_error = ConfigError("get_device failed for other")
 
-    def get_device_side_effect(path, fs):
+    def get_device_side_effect(path, **kwargs):
+        # grab it and use it at least once so mypy doesn’t complain
+        fs_arg = kwargs.get("fs")
+        assert fs_arg is mock_fs  # sanity-check that you really got your mock
+
         if path == BASE_DIR_PATH:
             return DEVICE_ID_BASE
         if path == target_path:

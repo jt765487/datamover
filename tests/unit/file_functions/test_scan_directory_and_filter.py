@@ -74,7 +74,7 @@ def test_filters_correctly_with_case_insensitive_behavior(
     caplog: pytest.LogCaptureFixture,
     all_sample_entries: list[GatheredEntryData],
     mock_scan_directory: Path,
-    mock_fs: Mock,  # Injected from conftest.py
+    mock_fs: Mock,
 ):
     """
     Tests correct filtering:
@@ -86,7 +86,11 @@ def test_filters_correctly_with_case_insensitive_behavior(
     # Arrange
     mock_gather = mocker.patch(GATHER_PATCH_TARGET, return_value=all_sample_entries)
     caplog.set_level(logging.DEBUG)
-    input_extension_mixed_case = "CsV"  # SUT should lowercase this to 'csv'
+    input_extension_mixed_case = "CsV"
+
+    # Unpack the first two entries instead of indexing
+    first_entry, second_entry, *rest = all_sample_entries
+    expected_filtered_entries = [first_entry, second_entry]
 
     # Act
     result = scan_directory_and_filter(
@@ -96,20 +100,17 @@ def test_filters_correctly_with_case_insensitive_behavior(
     )
 
     # Assert
-    # Expected: only the two CSV entries, in their original order from all_sample_entries
-    expected_filtered_entries = [all_sample_entries[0], all_sample_entries[1]]
     assert result == expected_filtered_entries, "Filtered list or order is incorrect"
 
     mock_gather.assert_called_once_with(directory=mock_scan_directory, fs=mock_fs)
 
-    # Log assertion: SUT converts input extension to lowercase for the log's suffix
     log_entry = find_log_record(
         caplog,
         logging.DEBUG,
         [
             f"Filtered {len(all_sample_entries)} gathered entries",
             f"down to {len(expected_filtered_entries)}",
-            "matching suffix '.csv'",  # SUT logs the lowercased, dotted suffix
+            "matching suffix '.csv'",
         ],
     )
     assert log_entry is not None, (

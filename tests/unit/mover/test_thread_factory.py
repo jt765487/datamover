@@ -1,298 +1,322 @@
+import logging
 import threading
-import unittest
-from collections.abc import Callable
 from pathlib import Path
 from queue import Queue
 from unittest.mock import MagicMock, patch, call
-import logging
+from typing import Callable, Tuple
 
-from datamover.mover.thread_factory import create_file_move_thread
+import pytest
+
+from datamover.file_functions.fs_mock import FS
 from datamover.mover.mover_thread import FileMoveThread
-from datamover.file_functions.fs_mock import FS  # For spec
-from datamover.protocols import SafeFileMover, SleepCallable  # For spec
-
+from datamover.mover.thread_factory import create_file_move_thread
+from datamover.protocols import SafeFileMover, SleepCallable
 from tests.test_utils.logging_helpers import find_log_record
 
-# --- Define constants for module paths and names ---
+# --- Constants for patch locations and logger name ---
 FACTORY_MODULE_PATH = "datamover.mover.thread_factory"
 PROCESS_SINGLE_LOGGER_NAME = FACTORY_MODULE_PATH
 FILE_MOVE_THREAD_CLASS_PATH = f"{FACTORY_MODULE_PATH}.FileMoveThread"
 RESOLVE_DIR_FUNC_PATH = f"{FACTORY_MODULE_PATH}.resolve_and_validate_directory"
 DEFAULT_MOVER_FUNC_PATH = f"{FACTORY_MODULE_PATH}.move_file_safely_impl"
-DEFAULT_SLEEP_FUNC_PATH = (
-    f"{FACTORY_MODULE_PATH}.time.sleep"  # Path to time.sleep as used in factory
-)
+DEFAULT_SLEEP_FUNC_PATH = f"{FACTORY_MODULE_PATH}.time.sleep"
 
 
-class TestCreateFileMoveThread(unittest.TestCase):
-    def setUp(self):
-        # Define explicit values that were previously in mock_config
-        self.test_source_dir_path = Path("raw/source_for_test")
-        self.test_worker_dir_path = Path("raw/destination_for_test")
-        self.test_poll_interval = 0.05  # Example poll interval
+# --- Fixtures ---
+@pytest.fixture
+def test_source_dir_path() -> Path:
+    return Path("raw/source_for_test")
 
-        self.source_queue = MagicMock(spec=Queue)
-        self.stop_event = threading.Event()
-        self.mock_fs = MagicMock(spec=FS)
-        self.mock_sleep_func = MagicMock(spec=SleepCallable)
 
-        self.resolved_src_dir = Path("/resolved/source")
-        self.resolved_dst_dir_name = "destination_folder_resolved"
-        self.mock_resolved_dst_dir = MagicMock(spec=Path)
-        self.mock_resolved_dst_dir.name = self.resolved_dst_dir_name
-        # Mocking how Path objects might be used if needed, e.g. self.mock_resolved_dst_dir / "filename"
-        self.mock_resolved_dst_dir.__truediv__ = lambda self_mock, other_name: Path(
-            f"/resolved_mock_dest/{other_name}"  # Make it a bit more path-like
-        )
+@pytest.fixture
+def test_worker_dir_path() -> Path:
+    return Path("raw/destination_for_test")
 
-        self.patcher_filemovethread = patch(
-            FILE_MOVE_THREAD_CLASS_PATH,
-            spec=FileMoveThread,  # spec ensures mock matches class
-        )
-        self.MockFileMoveThread_constructor = self.patcher_filemovethread.start()
 
-        self.patcher_resolve_dir = patch(RESOLVE_DIR_FUNC_PATH)
-        self.mock_resolve_and_validate_directory = self.patcher_resolve_dir.start()
+@pytest.fixture
+def test_poll_interval() -> float:
+    return 0.05
 
-        self.mock_resolve_and_validate_directory.side_effect = [
-            self.resolved_src_dir,
-            self.mock_resolved_dst_dir,
-        ]
 
-    def tearDown(self):
-        self.patcher_filemovethread.stop()
-        self.patcher_resolve_dir.stop()
-        self.stop_event.clear()
+@pytest.fixture
+def source_queue() -> MagicMock:
+    return MagicMock(spec=Queue)
 
-    def test_create_thread_successful_construction(self):
-        mock_created_thread_instance = self.MockFileMoveThread_constructor.return_value
-        test_file_mover_func = MagicMock(spec=SafeFileMover)
 
-        thread = create_file_move_thread(
-            source_dir_path=self.test_source_dir_path,  # New arg
-            worker_dir_path=self.test_worker_dir_path,  # New arg
-            poll_interval_seconds=self.test_poll_interval,  # New arg
-            source_queue=self.source_queue,
-            stop_event=self.stop_event,
-            fs=self.mock_fs,
-            file_mover_func=test_file_mover_func,
-            sleep_func=self.mock_sleep_func,
-        )
+@pytest.fixture
+def stop_event() -> threading.Event:
+    return threading.Event()
 
-        self.assertEqual(thread, mock_created_thread_instance)
-        self.mock_resolve_and_validate_directory.assert_has_calls(
-            [
-                call(
-                    raw_path=self.test_source_dir_path,  # Updated
-                    fs=self.mock_fs,
-                    dir_label="source for FileMover",  # Match new label from factory
-                ),
-                call(
-                    raw_path=self.test_worker_dir_path,  # Updated
-                    fs=self.mock_fs,
-                    dir_label="destination for FileMover (worker)",  # Match new label
-                ),
-            ],
-            any_order=False,
-        )
-        self.assertEqual(self.mock_resolve_and_validate_directory.call_count, 2)
 
-        expected_thread_name = f"FileMover-{self.resolved_dst_dir_name}"
-        self.MockFileMoveThread_constructor.assert_called_once()
-        _args, constructor_kwargs = self.MockFileMoveThread_constructor.call_args
+@pytest.fixture
+def mock_fs() -> MagicMock:
+    return MagicMock(spec=FS)
 
-        self.assertEqual(constructor_kwargs.get("source_queue"), self.source_queue)
-        self.assertTrue(callable(constructor_kwargs.get("process_single")))
-        self.assertEqual(constructor_kwargs.get("stop_event"), self.stop_event)
-        self.assertEqual(constructor_kwargs.get("sleep_func"), self.mock_sleep_func)
-        self.assertEqual(constructor_kwargs.get("name"), expected_thread_name)
-        self.assertEqual(
-            constructor_kwargs.get("poll_interval"), self.test_poll_interval
-        )  # New assertion
 
-    def test_create_thread_uses_default_file_mover_and_sleep(self):
-        with (
-            patch(DEFAULT_MOVER_FUNC_PATH) as mock_default_mover,
-            patch(
-                DEFAULT_SLEEP_FUNC_PATH
-            ) as mock_default_sleep,  # This patches time.sleep
-        ):
-            create_file_move_thread(
-                source_dir_path=self.test_source_dir_path,  # New arg
-                worker_dir_path=self.test_worker_dir_path,  # New arg
-                poll_interval_seconds=self.test_poll_interval,  # New arg
-                source_queue=self.source_queue,
-                stop_event=self.stop_event,
-                fs=self.mock_fs,
-                # file_mover_func and sleep_func are omitted to test defaults
-            )
+@pytest.fixture
+def mock_sleep_func() -> MagicMock:
+    return MagicMock(spec=SleepCallable)
 
-            self.MockFileMoveThread_constructor.assert_called_once()
-            _args, constructor_kwargs = self.MockFileMoveThread_constructor.call_args
 
-            self.assertEqual(constructor_kwargs.get("sleep_func"), mock_default_sleep)
-            self.assertEqual(
-                constructor_kwargs.get("poll_interval"), self.test_poll_interval
-            )  # New assertion
+@pytest.fixture
+def resolved_src_dir() -> Path:
+    return Path("/resolved/source")
 
-            process_single_func = constructor_kwargs.get("process_single")
-            self.assertTrue(callable(process_single_func))
 
-            test_path_to_move = Path("some_file_to_process.txt")
-            process_single_func(test_path_to_move)
+@pytest.fixture
+def resolved_dst_dir_name() -> str:
+    return "destination_folder_resolved"
 
-            mock_default_mover.assert_called_once_with(
-                source_path_raw=test_path_to_move,
-                expected_source_dir=self.resolved_src_dir,
-                destination_dir=self.mock_resolved_dst_dir,
-                fs=self.mock_fs,
-            )
 
-    def _get_process_single_func_from_factory(
-        self, file_mover_to_use: SafeFileMover
-    ) -> Callable[[Path], None]:
-        self.MockFileMoveThread_constructor.reset_mock()
-        self.mock_resolve_and_validate_directory.reset_mock()
-        self.mock_resolve_and_validate_directory.side_effect = [
-            self.resolved_src_dir,
-            self.mock_resolved_dst_dir,
-        ]
+@pytest.fixture
+def mock_resolved_dst_dir(resolved_dst_dir_name) -> MagicMock:
+    m = MagicMock(spec=Path)
+    m.name = resolved_dst_dir_name
+    m.__truediv__.side_effect = lambda other: Path(f"/resolved_mock_dest/{other}")
+    return m
 
+
+@pytest.fixture
+def filemove_ctor(monkeypatch) -> MagicMock:
+    ctor = MagicMock(spec=FileMoveThread)
+    monkeypatch.setattr(FILE_MOVE_THREAD_CLASS_PATH, ctor)
+    return ctor
+
+
+@pytest.fixture(autouse=True)
+def resolve_dir(monkeypatch, resolved_src_dir, mock_resolved_dst_dir) -> MagicMock:
+    fn = MagicMock()
+    fn.side_effect = [resolved_src_dir, mock_resolved_dst_dir]
+    monkeypatch.setattr(RESOLVE_DIR_FUNC_PATH, fn)
+    return fn
+
+
+@pytest.fixture
+def process_single_factory(
+    test_source_dir_path: Path,
+    test_worker_dir_path: Path,
+    test_poll_interval: float,
+    source_queue: MagicMock,
+    stop_event: threading.Event,
+    mock_fs: MagicMock,
+    mock_sleep_func: MagicMock,
+    mock_resolved_dst_dir: MagicMock,
+    filemove_ctor: MagicMock,
+) -> Callable[[SafeFileMover], Tuple[Callable[[Path], None], str]]:
+    def _make(mover_func: SafeFileMover):
         create_file_move_thread(
-            source_dir_path=self.test_source_dir_path,  # New arg
-            worker_dir_path=self.test_worker_dir_path,  # New arg
-            poll_interval_seconds=self.test_poll_interval,  # New arg
-            source_queue=self.source_queue,
-            stop_event=self.stop_event,
-            fs=self.mock_fs,
-            file_mover_func=file_mover_to_use,
-            sleep_func=self.mock_sleep_func,
+            source_dir_path=test_source_dir_path,
+            worker_dir_path=test_worker_dir_path,
+            poll_interval_seconds=test_poll_interval,
+            source_queue=source_queue,
+            stop_event=stop_event,
+            fs=mock_fs,
+            file_mover_func=mover_func,
+            sleep_func=mock_sleep_func,
         )
-        self.MockFileMoveThread_constructor.assert_called_once()
-        _args, kwargs = self.MockFileMoveThread_constructor.call_args
-        process_single_func = kwargs.get("process_single")
-        self.assertTrue(callable(process_single_func))
-        return process_single_func
+        kwargs = filemove_ctor.call_args[1]
+        proc_fn = kwargs["process_single"]
+        thread_name = f"FileMover-{mock_resolved_dst_dir.name}"
+        return proc_fn, thread_name
 
-    def test_process_single_item_success_logging(self):
-        test_path_to_move = Path("source_file.txt")
-        expected_final_dest_path_obj = (
-            self.mock_resolved_dst_dir
-            / test_path_to_move.name  # Using mocked __truediv__
+    return _make
+
+
+# --- Tests ---
+
+
+def test_create_thread_successful_construction(
+    test_source_dir_path: Path,
+    test_worker_dir_path: Path,
+    test_poll_interval: float,
+    source_queue: MagicMock,
+    stop_event: threading.Event,
+    mock_fs: MagicMock,
+    mock_sleep_func: MagicMock,
+    mock_resolved_dst_dir: MagicMock,
+    filemove_ctor: MagicMock,
+    resolve_dir: MagicMock,
+):
+    mover_func = MagicMock(spec=SafeFileMover)
+
+    thread = create_file_move_thread(
+        source_dir_path=test_source_dir_path,
+        worker_dir_path=test_worker_dir_path,
+        poll_interval_seconds=test_poll_interval,
+        source_queue=source_queue,
+        stop_event=stop_event,
+        fs=mock_fs,
+        file_mover_func=mover_func,
+        sleep_func=mock_sleep_func,
+    )
+
+    assert thread is filemove_ctor.return_value
+    resolve_dir.assert_has_calls(
+        [
+            call(
+                raw_path=test_source_dir_path,
+                fs=mock_fs,
+                dir_label="source for FileMover",
+            ),
+            call(
+                raw_path=test_worker_dir_path,
+                fs=mock_fs,
+                dir_label="destination for FileMover (worker)",
+            ),
+        ],
+        any_order=False,
+    )
+    assert resolve_dir.call_count == 2
+
+    expected_name = f"FileMover-{mock_resolved_dst_dir.name}"
+    _, kwargs = filemove_ctor.call_args
+    assert kwargs["source_queue"] is source_queue
+    assert callable(kwargs["process_single"])
+    assert kwargs["stop_event"] is stop_event
+    assert kwargs["sleep_func"] is mock_sleep_func
+    assert kwargs["name"] == expected_name
+    assert kwargs["poll_interval"] == test_poll_interval
+
+
+def test_create_thread_uses_default_file_mover_and_sleep(
+    test_source_dir_path: Path,
+    test_worker_dir_path: Path,
+    test_poll_interval: float,
+    source_queue: MagicMock,
+    stop_event: threading.Event,
+    mock_fs: MagicMock,
+    mock_resolved_dst_dir: MagicMock,
+    resolved_src_dir: Path,
+    filemove_ctor: MagicMock,
+):
+    with (
+        patch(DEFAULT_MOVER_FUNC_PATH) as mock_default_mover,
+        patch(DEFAULT_SLEEP_FUNC_PATH) as mock_default_sleep,
+    ):
+        create_file_move_thread(
+            source_dir_path=test_source_dir_path,
+            worker_dir_path=test_worker_dir_path,
+            poll_interval_seconds=test_poll_interval,
+            source_queue=source_queue,
+            stop_event=stop_event,
+            fs=mock_fs,
         )
 
-        current_test_mover_mock = MagicMock(
-            spec=SafeFileMover, return_value=expected_final_dest_path_obj
-        )
-        process_single = self._get_process_single_func_from_factory(
-            file_mover_to_use=current_test_mover_mock
+    _, kwargs = filemove_ctor.call_args
+    assert kwargs["sleep_func"] is mock_default_sleep
+    assert kwargs["poll_interval"] == test_poll_interval
+
+    proc_fn = kwargs["process_single"]
+    test_path = Path("some_file_to_process.txt")
+    proc_fn(test_path)
+    mock_default_mover.assert_called_once_with(
+        source_path_raw=test_path,
+        expected_source_dir=resolved_src_dir,
+        destination_dir=mock_resolved_dst_dir,
+        fs=mock_fs,
+    )
+
+
+def test_process_single_item_success_logging(
+    process_single_factory,
+    mock_resolved_dst_dir: MagicMock,
+    caplog,
+):
+    final_dest = mock_resolved_dst_dir / "source_file.txt"
+    mover_mock = MagicMock(spec=SafeFileMover, return_value=final_dest)
+
+    proc_fn, thread_name = process_single_factory(mover_mock)
+    caplog.set_level(logging.DEBUG, logger=PROCESS_SINGLE_LOGGER_NAME)
+
+    proc_fn(Path("source_file.txt"))
+
+    mover_mock.assert_called_once()
+    log = find_log_record(
+        caplog,
+        logging.DEBUG,
+        [
+            thread_name,
+            "Successfully processed and moved",
+            "source_file.txt",
+            str(final_dest),
+        ],
+    )
+    assert log is not None
+
+
+def test_process_single_item_failure_mover_returns_none_logging(
+    process_single_factory,
+    caplog,
+):
+    mover_mock = MagicMock(spec=SafeFileMover, return_value=None)
+
+    proc_fn, thread_name = process_single_factory(mover_mock)
+    caplog.set_level(logging.WARNING, logger=PROCESS_SINGLE_LOGGER_NAME)
+
+    proc_fn(Path("unmovable_file.txt"))
+
+    mover_mock.assert_called_once()
+    log = find_log_record(
+        caplog,
+        logging.WARNING,
+        [thread_name, "Failed to process 'unmovable_file.txt'", "See previous logs"],
+    )
+    assert log is not None
+
+
+def test_process_single_item_unexpected_exception_in_mover_logging(
+    process_single_factory,
+    caplog,
+):
+    err = RuntimeError("Kaboom!")
+    mover_mock = MagicMock(spec=SafeFileMover, side_effect=err)
+
+    proc_fn, thread_name = process_single_factory(mover_mock)
+    caplog.set_level(logging.ERROR, logger=PROCESS_SINGLE_LOGGER_NAME)
+
+    proc_fn(Path("exploding_file.txt"))
+
+    mover_mock.assert_called_once()
+    log = find_log_record(
+        caplog,
+        logging.ERROR,
+        [
+            thread_name,
+            "Unexpected critical error during file processing for 'exploding_file.txt'",
+            "Kaboom!",
+        ],
+    )
+    assert log is not None
+    assert log.exc_info is not None
+    _, exc_val, _ = log.exc_info
+    assert exc_val is err
+
+
+def test_resolve_directory_raises_exception_propagates(
+    test_source_dir_path: Path,
+    test_worker_dir_path: Path,
+    test_poll_interval: float,
+    source_queue: MagicMock,
+    stop_event: threading.Event,
+    mock_fs: MagicMock,
+    mock_sleep_func: MagicMock,
+    filemove_ctor: MagicMock,
+    resolve_dir: MagicMock,
+):
+    expected_exc = ValueError("Invalid directory path for test")
+    resolve_dir.side_effect = expected_exc
+
+    with pytest.raises(ValueError) as exc:
+        create_file_move_thread(
+            source_dir_path=test_source_dir_path,
+            worker_dir_path=test_worker_dir_path,
+            poll_interval_seconds=test_poll_interval,
+            source_queue=source_queue,
+            stop_event=stop_event,
+            fs=mock_fs,
+            file_mover_func=MagicMock(spec=SafeFileMover),
+            sleep_func=mock_sleep_func,
         )
 
-        thread_name_for_log = f"FileMover-{self.resolved_dst_dir_name}"
-
-        with self.assertLogs(logger=PROCESS_SINGLE_LOGGER_NAME, level="DEBUG") as cm:
-            process_single(test_path_to_move)
-
-        current_test_mover_mock.assert_called_once_with(
-            source_path_raw=test_path_to_move,
-            expected_source_dir=self.resolved_src_dir,
-            destination_dir=self.mock_resolved_dst_dir,
-            fs=self.mock_fs,
-        )
-        log_entry = find_log_record(
-            cm,
-            logging.DEBUG,
-            [
-                thread_name_for_log,
-                "Successfully processed and moved",
-                test_path_to_move.name,
-                str(expected_final_dest_path_obj),
-            ],
-        )
-        self.assertIsNotNone(log_entry, "Success log message not found or incorrect.")
-
-    def test_process_single_item_failure_mover_returns_none_logging(self):
-        test_path_to_move = Path("unmovable_file.txt")
-        current_test_mover_mock = MagicMock(spec=SafeFileMover, return_value=None)
-        process_single = self._get_process_single_func_from_factory(
-            file_mover_to_use=current_test_mover_mock
-        )
-        thread_name_for_log = f"FileMover-{self.resolved_dst_dir_name}"
-        with self.assertLogs(logger=PROCESS_SINGLE_LOGGER_NAME, level="WARNING") as cm:
-            process_single(test_path_to_move)
-
-        current_test_mover_mock.assert_called_once_with(
-            source_path_raw=test_path_to_move,
-            expected_source_dir=self.resolved_src_dir,
-            destination_dir=self.mock_resolved_dst_dir,
-            fs=self.mock_fs,
-        )
-        log_entry = find_log_record(
-            cm,
-            logging.WARNING,
-            [
-                thread_name_for_log,
-                f"Failed to process '{test_path_to_move}'",
-                "See previous logs",
-            ],
-        )
-        self.assertIsNotNone(
-            log_entry, "Warning log for mover failure not found or incorrect."
-        )
-
-    def test_process_single_item_unexpected_exception_in_mover_logging(self):
-        test_path_to_move = Path("exploding_file.txt")
-        error_message = "Kaboom!"
-        mock_exception = RuntimeError(error_message)
-        current_test_mover_mock = MagicMock(
-            spec=SafeFileMover, side_effect=mock_exception
-        )
-        process_single = self._get_process_single_func_from_factory(
-            file_mover_to_use=current_test_mover_mock
-        )
-        thread_name_for_log = f"FileMover-{self.resolved_dst_dir_name}"
-        with self.assertLogs(logger=PROCESS_SINGLE_LOGGER_NAME, level="ERROR") as cm:
-            process_single(test_path_to_move)
-
-        current_test_mover_mock.assert_called_once_with(
-            source_path_raw=test_path_to_move,
-            expected_source_dir=self.resolved_src_dir,
-            destination_dir=self.mock_resolved_dst_dir,
-            fs=self.mock_fs,
-        )
-        log_entry = find_log_record(
-            cm,
-            logging.ERROR,
-            [
-                thread_name_for_log,
-                f"Unexpected critical error during file processing for '{test_path_to_move}'",
-                error_message,
-            ],
-        )
-        self.assertIsNotNone(
-            log_entry,
-            "Error log for unexpected mover exception not found or incorrect.",
-        )
-        if log_entry:
-            self.assertIsNotNone(log_entry.exc_info)
-            self.assertIs(log_entry.exc_info[0], RuntimeError)
-
-    def test_resolve_directory_raises_exception_propagates(self):
-        self.mock_resolve_and_validate_directory.reset_mock()
-        expected_exception = ValueError("Invalid directory path for test")
-        self.mock_resolve_and_validate_directory.side_effect = expected_exception
-        test_file_mover_func = MagicMock(spec=SafeFileMover)
-
-        with self.assertRaises(ValueError) as context:
-            create_file_move_thread(
-                source_dir_path=self.test_source_dir_path,  # New arg
-                worker_dir_path=self.test_worker_dir_path,  # New arg
-                poll_interval_seconds=self.test_poll_interval,  # New arg
-                source_queue=self.source_queue,
-                stop_event=self.stop_event,
-                fs=self.mock_fs,
-                file_mover_func=test_file_mover_func,
-                sleep_func=self.mock_sleep_func,
-            )
-        self.assertIs(context.exception, expected_exception)
-        self.MockFileMoveThread_constructor.assert_not_called()
+    assert exc.value is expected_exc
+    filemove_ctor.assert_not_called()

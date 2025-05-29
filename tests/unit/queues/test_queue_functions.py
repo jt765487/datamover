@@ -13,9 +13,6 @@ from datamover.queues.queue_functions import (
 from tests.test_utils.logging_helpers import find_log_record
 
 
-# --- Test Cases ---
-
-
 def test_safe_put_successful_blocking_default_timeout(caplog: pytest.LogCaptureFixture):
     """
     Tests successful put with default timeout (block=True, timeout=None).
@@ -101,56 +98,32 @@ def test_safe_put_successful_non_blocking_timeout(caplog: pytest.LogCaptureFixtu
     assert log_entry is not None, "Debug log for successful non-blocking put not found."
 
 
-def test_safe_put_queue_full_on_timed_put(caplog: pytest.LogCaptureFixture):
+@pytest.mark.parametrize(
+    "timeout_val, queue_name, item_to_put, expected_timeout_str",
+    [
+        (0.5, "FullTimedQueue", "item_for_full_queue_timed", "(Timeout: 0.5)"),
+        (0, "FullNonBlockingQueue", "item_for_full_queue_non_blocking", "(Timeout: 0)"),
+        (
+            None,
+            "FullBlockingQueue",
+            "item_for_full_queue_blocking",
+            "(Timeout: None)",
+        ),
+    ],
+)
+def test_safe_put_queue_full_raises(
+    caplog: pytest.LogCaptureFixture,
+    timeout_val,
+    queue_name,
+    item_to_put,
+    expected_timeout_str,
+):
     """
-    Tests QueueFullOnPut exception when a timed put (timeout > 0) encounters
-    a full queue (mocked by raising queue.Full).
-    Verifies warning log and correct exception.
-    """
-    caplog.set_level(logging.WARNING)
-    mock_queue = MagicMock(spec=queue.Queue)
-    item_to_put = "item_for_full_queue_timed"
-    queue_name = "FullTimedQueue"
-    timeout_val = 0.5
-
-    mock_queue.put.side_effect = queue.Full
-
-    with pytest.raises(QueueFullOnPut) as exc_info:
-        safe_put(
-            item=item_to_put,
-            output_queue=mock_queue,
-            queue_name=queue_name,
-            timeout=timeout_val,
-        )
-
-    mock_queue.put.assert_called_once_with(item_to_put, block=True, timeout=timeout_val)
-    assert exc_info.value.__cause__ is None  # Check 'from None'
-
-    log_entry = find_log_record(
-        caplog,
-        logging.WARNING,
-        [
-            f"Queue full condition encountered for '{queue_name}' queue",
-            f"Item: {item_to_put}",
-            f"(Timeout: {timeout_val})",
-            "Raising QueueFullOnPut",
-        ],
-    )
-    assert log_entry is not None, "Warning log for QueueFullOnPut (timed) not found."
-
-
-def test_safe_put_queue_full_on_non_blocking_put(caplog: pytest.LogCaptureFixture):
-    """
-    Tests QueueFullOnPut exception when a non-blocking put (timeout <= 0)
-    encounters a full queue.
-    Verifies warning log and correct exception.
+    Parametrized test for QueueFullOnPut when queue.put() raises queue.Full
+    under various timeout configurations.
     """
     caplog.set_level(logging.WARNING)
     mock_queue = MagicMock(spec=queue.Queue)
-    item_to_put = "item_for_full_queue_non_blocking"
-    queue_name = "FullNonBlockingQueue"
-    timeout_val = 0
-
     mock_queue.put.side_effect = queue.Full
 
     with pytest.raises(QueueFullOnPut) as exc_info:
@@ -163,57 +136,20 @@ def test_safe_put_queue_full_on_non_blocking_put(caplog: pytest.LogCaptureFixtur
 
     mock_queue.put.assert_called_once_with(item_to_put, block=True, timeout=timeout_val)
     assert exc_info.value.__cause__ is None
+
     log_entry = find_log_record(
         caplog,
         logging.WARNING,
         [
             f"Queue full condition encountered for '{queue_name}' queue",
             f"Item: {item_to_put}",
-            f"(Timeout: {timeout_val})",
+            expected_timeout_str,
             "Raising QueueFullOnPut",
         ],
     )
     assert log_entry is not None, (
-        "Warning log for QueueFullOnPut (non-blocking) not found."
+        f"Warning log for QueueFullOnPut ({queue_name}) not found."
     )
-
-
-def test_safe_put_queue_full_on_blocking_put_default_timeout(
-    caplog: pytest.LogCaptureFixture,
-):
-    """
-    Tests QueueFullOnPut when a blocking put (timeout=None) encounters
-    a full queue (mocked).
-    """
-    caplog.set_level(logging.WARNING)
-    mock_queue = MagicMock(spec=queue.Queue)
-    item_to_put = "item_for_full_queue_blocking"
-    queue_name = "FullBlockingQueue"
-    timeout_val = None
-
-    mock_queue.put.side_effect = queue.Full
-
-    with pytest.raises(QueueFullOnPut) as exc_info:
-        safe_put(
-            item=item_to_put,
-            output_queue=mock_queue,
-            queue_name=queue_name,
-            timeout=timeout_val,
-        )
-
-    mock_queue.put.assert_called_once_with(item_to_put, block=True, timeout=timeout_val)
-    assert exc_info.value.__cause__ is None
-    log_entry = find_log_record(
-        caplog,
-        logging.WARNING,
-        [
-            f"Queue full condition encountered for '{queue_name}' queue",
-            f"Item: {item_to_put}",
-            "(Timeout: None)",
-            "Raising QueueFullOnPut",
-        ],
-    )
-    assert log_entry is not None, "Warning log for QueueFullOnPut (blocking) not found."
 
 
 def test_safe_put_unexpected_exception_during_put(caplog: pytest.LogCaptureFixture):
@@ -252,12 +188,10 @@ def test_safe_put_unexpected_exception_during_put(caplog: pytest.LogCaptureFixtu
         ],
     )
     assert log_entry is not None, "Error log for QueuePutFailed not found."
-    # Verify exc_info is populated by logger.exception
     assert log_entry.exc_info is not None
-    assert log_entry.exc_info[0] is RuntimeError  # Check type of original exception
-    assert (
-        log_entry.exc_info[1] is original_exception
-    )  # Check instance of original exception
+    exc_type, exc_value, _ = log_entry.exc_info
+    assert exc_type is RuntimeError
+    assert exc_value is original_exception
 
 
 def test_queue_put_error_is_base_for_specific_errors():
@@ -270,13 +204,13 @@ def test_queue_put_error_is_base_for_specific_errors():
     try:
         raise QueueFullOnPut()
     except QueuePutError:
-        pass  # Expected
+        pass
     except Exception:  # pragma: no cover
         pytest.fail("QueueFullOnPut should be caught by QueuePutError")
 
     try:
         raise QueuePutFailed()
     except QueuePutError:
-        pass  # Expected
+        pass
     except Exception:  # pragma: no cover
         pytest.fail("QueuePutFailed should be caught by QueuePutError")

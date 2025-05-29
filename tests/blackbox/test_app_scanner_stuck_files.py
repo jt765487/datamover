@@ -94,9 +94,7 @@ class TestAppScannerStuckAndLostFiles:
         nifi_target_path = env.nifi_endpoint_path_str
 
         # Get critical timeouts from the test environment's config
-        scan_interval = (
-            env.config.scanner_check_seconds
-        )
+        scan_interval = env.config.scanner_check_seconds
         stuck_timeout = env.config.stuck_active_file_timeout_seconds
         lost_timeout = env.config.lost_timeout_seconds
 
@@ -266,7 +264,10 @@ class TestAppScannerStuckAndLostFiles:
         lost_log = find_log_record(
             caplog,
             logging.INFO,
-            required_substrings=["Identified a new file as LOST", str(pcap_source_path)],
+            required_substrings=[
+                "Identified file as LOST",
+                str(pcap_source_path),
+            ],
         )
         assert (
             lost_log is not None

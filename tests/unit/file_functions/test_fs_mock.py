@@ -237,3 +237,97 @@ def test_relative_to(tmp_path, as_pathlike, real_fs):
     other.mkdir()
     with pytest.raises(ValueError):
         real_fs.relative_to(as_pathlike(file), as_pathlike(other))
+
+
+def test_unlink_file_and_symlink(tmp_path: Path, as_pathlike, real_fs):
+    """Test that unlink removes regular files and symlinks, and respects missing_ok."""
+    # 1. Test unlinking a regular file
+    regular_file = tmp_path / "regular.txt"
+    regular_file.write_text("This is a regular file.")
+    assert regular_file.exists()
+
+    real_fs.unlink(as_pathlike(regular_file))
+    assert not regular_file.exists()
+
+    # 2. Test unlinking a non-existent file (missing_ok=False - default)
+    non_existent_file = tmp_path / "does_not_exist.txt"
+    assert not non_existent_file.exists()
+    with pytest.raises(FileNotFoundError):
+        real_fs.unlink(as_pathlike(non_existent_file))  # missing_ok is False by default
+
+    # 3. Test unlinking a non-existent file (missing_ok=True)
+    # No error should be raised
+    real_fs.unlink(as_pathlike(non_existent_file), missing_ok=True)
+    assert not non_existent_file.exists()  # Still shouldn't exist
+
+    # 4. Test unlinking a symbolic link (valid target)
+    target_file = tmp_path / "target_for_symlink.txt"
+    target_file.write_text("This is the target of the symlink.")
+    assert target_file.exists()
+
+    symlink_path = tmp_path / "my_symlink"
+    try:
+        symlink_path.symlink_to(target_file)
+    except OSError as e:
+        pytest.skip(f"Symlink creation failed, skipping symlink unlink test: {e}")
+
+    assert symlink_path.is_symlink()  # Verify it's a symlink
+    assert real_fs.exists(
+        as_pathlike(symlink_path)
+    )  # FS.exists should see it (follows link)
+
+    # Unlink the symlink
+    real_fs.unlink(as_pathlike(symlink_path))
+    assert not symlink_path.exists()  # Symlink should be gone (Path.exists() is False)
+    assert not symlink_path.is_symlink()  # is_symlink() on non-existent is False
+    assert target_file.exists()  # Target file should still exist
+
+    # 5. Test unlinking a broken symbolic link (target does not exist)
+    broken_symlink_target = tmp_path / "non_existent_target_for_broken_link.txt"
+    broken_symlink = tmp_path / "broken_link_to_be_unlinked"  # Use a distinct name
+    assert not broken_symlink_target.exists()
+    if (
+        broken_symlink.exists() or broken_symlink.is_symlink()
+    ):  # Cleanup if exists from previous failed run
+        broken_symlink.unlink(missing_ok=True)
+
+    try:
+        broken_symlink.symlink_to(broken_symlink_target)  # Link to a non-existent file
+    except OSError as e:
+        pytest.skip(
+            f"Symlink creation failed, skipping broken symlink unlink test: {e}"
+        )
+
+    assert (
+        broken_symlink.is_symlink()
+    )  # The symlink file itself exists, even if broken.
+    # Note: real_fs.exists(broken_symlink) would be False here, as it follows os.path.exists.
+    # However, the link *file* is present.
+
+    # Case 5a: Unlink an *existing* broken symlink with missing_ok=False.
+    # This should SUCCEED because the symlink file 'broken_symlink' itself exists.
+    real_fs.unlink(as_pathlike(broken_symlink), missing_ok=False)
+    assert not broken_symlink.exists()  # Path.exists() is False for non-existent paths
+    assert (
+        not broken_symlink.is_symlink()
+    )  # is_symlink() is False for non-existent paths
+
+    # Case 5b: Attempt to unlink the (now non-existent) path again, with missing_ok=True.
+    # This should NOT raise an error because missing_ok=True.
+    real_fs.unlink(as_pathlike(broken_symlink), missing_ok=True)
+    assert not broken_symlink.exists()  # Still doesn't exist
+
+    # Case 5c: Attempt to unlink the (still non-existent) path again, with missing_ok=False.
+    # This SHOULD raise FileNotFoundError because the path 'broken_symlink' does not exist.
+    with pytest.raises(FileNotFoundError):
+        real_fs.unlink(as_pathlike(broken_symlink), missing_ok=False)
+
+    # 6. Test unlinking a directory (should fail)
+    test_dir = tmp_path / "unlink_dir_test"
+    test_dir.mkdir()
+    assert test_dir.is_dir()
+    with pytest.raises(
+        (IsADirectoryError, PermissionError, OSError)
+    ):  # OSError for Windows, IsADirectoryError for POSIX
+        real_fs.unlink(as_pathlike(test_dir))
+    assert test_dir.exists()  # Directory should still be there

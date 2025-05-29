@@ -111,14 +111,18 @@ def test_execute_move_failures(
         assert error_log.exc_info is not None, (
             "exc_info should be set by logger.exception"
         )
-        assert isinstance(error_log.exc_info[1], type(error_type)), (
+        assert error_log.exc_info is not None
+        _, exc_val, _ = error_log.exc_info
+        assert isinstance(exc_val, type(error_type)), (
             "Incorrect exception type in exc_info"
         )
+
         # For logger.exception, str(error_type) is part of exc_text, not directly in message
         assert str(error_type) not in error_log.message, (
             "str(error) should not be in message for logger.exception"
         )
-        assert str(error_type) in error_log.exc_text, (
+        text = error_log.exc_text or ""
+        assert str(error_type) in text, (
             "str(error) should be in exc_text for logger.exception"
         )
 

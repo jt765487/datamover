@@ -3,6 +3,7 @@ import queue
 import threading
 import time
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 import datamover.app as app_module
 from datamover.app import AppRunFailureError, AppSetupError
 from datamover.protocols import FS, HttpClient, FileScanner
+from datamover.startup_code.context import AppContext
 from tests.test_utils.logging_helpers import find_log_record
 
 # Import SUT dependencies for test_run_factory_arguments_passed_correctly
@@ -161,35 +163,52 @@ def test_run_successful_initialization_start_and_shutdown(
 
 
 def test_run_initialization_failure_in_build_phase_raises_appsetuperror(
-    mock_app_context: SimpleNamespace,
+    mock_app_context: SimpleNamespace,  # fixture returns a SimpleNamespace
     monkeypatch,
     caplog: pytest.LogCaptureFixture,
-):
+) -> None:
     caplog.set_level(logging.INFO)
     build_exception = ValueError("Scanner factory build deliberately failed")
 
+    # Patch the factory so it raises during build
     failing_scan_factory = MagicMock(
         side_effect=build_exception, name="failing_create_scan_thread_mock"
     )
     monkeypatch.setattr(app_module, "create_scan_thread", failing_scan_factory)
+
+    # Ensure the move factory is never called
     mock_move_factory = MagicMock(name="move_factory_not_called")
     monkeypatch.setattr(app_module, "create_file_move_thread", mock_move_factory)
 
-    with pytest.raises(AppSetupError) as excinfo:
-        app_module.run(mock_app_context)
+    # Cast our SimpleNamespace into the real AppContext type for mypy
+    ctx = cast(AppContext, mock_app_context)
 
+    with pytest.raises(AppSetupError) as excinfo:
+        app_module.run(ctx)
+
+    # The AppSetupError should wrap the original build exception
     assert excinfo.value.__cause__ is build_exception
+
+    # Verify we tried to build the scan thread, and never the move thread
     failing_scan_factory.assert_called_once()
     mock_move_factory.assert_not_called()
 
+    # Check that a critical log was emitted with the right message and exception
     log_record_setup_phase = find_log_record(
         caplog,
         logging.CRITICAL,
         ["Setup phase encountered a fatal error", str(build_exception)],
     )
     assert log_record_setup_phase is not None
-    assert log_record_setup_phase.exc_info[1] is build_exception
-    assert mock_app_context.shutdown_event.is_set()
+
+    # Unpack exc_info rather than indexing
+    assert log_record_setup_phase.exc_info is not None
+    _, logged_exc, _ = log_record_setup_phase.exc_info
+    assert logged_exc is build_exception
+
+    # After failure, we should trigger shutdown
+    assert ctx.shutdown_event.is_set()
+    # And log the shutdown-complete message
     assert find_log_record(caplog, logging.INFO, ["Application shutdown complete."])
 
 
@@ -198,12 +217,12 @@ def test_run_thread_start_failure_raises_appsetuperror(
     monkeypatch,
     mock_all_thread_factories_and_components: dict,
     caplog: pytest.LogCaptureFixture,
-):
+) -> None:
     caplog.set_level(logging.INFO)
 
+    # Arrange: get the mocked components and reset their state
     mock_components = mock_all_thread_factories_and_components["components"]
-
-    for key, comp in mock_components.items():
+    for comp in mock_components.values():
         comp.start.reset_mock()
         comp.join.reset_mock()
         comp._test_is_alive_flag = True
@@ -214,38 +233,49 @@ def test_run_thread_start_failure_raises_appsetuperror(
     start_failure_exception = RuntimeError("Mover start deliberate failure")
     mover_thread_fails_start.start.side_effect = start_failure_exception
 
+    # Cast our SimpleNamespace fixture to the real AppContext for mypy
+    ctx = cast(AppContext, mock_app_context)
+
+    # Act & Assert: run should raise AppSetupError wrapping the start exception
     with pytest.raises(AppSetupError) as excinfo:
-        app_module.run(mock_app_context)
+        app_module.run(ctx)
 
     assert excinfo.value.__cause__ is start_failure_exception
 
+    # Verify that only the scanner and mover start() were called
     scanner_thread_ok.start.assert_called_once()
     mover_thread_fails_start.start.assert_called_once()
-    mock_components["observer"].start.assert_not_called()  # And other subsequent ones
+    mock_components["observer"].start.assert_not_called()
 
+    # Check the specific failure log for the mover component
     log_record_start_fail_specific = find_log_record(
         caplog,
         logging.CRITICAL,
         ["Failed to start component file_mover", str(start_failure_exception)],
     )
     assert log_record_start_fail_specific is not None
-    assert log_record_start_fail_specific.exc_info[1] is start_failure_exception
+    assert log_record_start_fail_specific.exc_info is not None
+    _, logged_exc, _ = log_record_start_fail_specific.exc_info
+    assert logged_exc is start_failure_exception
 
+    # Check the overarching setup-phase fatal error log
     log_record_setup_phase = find_log_record(
         caplog,
         logging.CRITICAL,
         ["Setup phase encountered a fatal error", str(start_failure_exception)],
     )
     assert log_record_setup_phase is not None
-    assert log_record_setup_phase.exc_info[1] is start_failure_exception
+    assert log_record_setup_phase.exc_info is not None
+    _, logged_cause, _ = log_record_setup_phase.exc_info
+    assert logged_cause is start_failure_exception
 
-    assert mock_app_context.shutdown_event.is_set()
+    # After the failure, shutdown_event must be set
+    assert ctx.shutdown_event.is_set()
 
-    # scanner_thread_ok was started and then joined in _start_components's cleanup
+    # Verify cleanup joined the scanner thread with half the timeout
     scanner_thread_ok.join.assert_called_once_with(timeout=SUT_THREAD_JOIN_TIMEOUT / 2)
 
-    # These components were BUILT. Their start() either failed or was not reached.
-    # They will be joined by the main finally block -> _stop_and_join_components
+    # And that all built components were joined with the full timeout
     mover_thread_fails_start.join.assert_called_once_with(
         timeout=SUT_THREAD_JOIN_TIMEOUT
     )
@@ -259,6 +289,7 @@ def test_run_thread_start_failure_raises_appsetuperror(
         timeout=SUT_THREAD_JOIN_TIMEOUT
     )
 
+    # Ensure we logged the shutdown-complete message and did not log successful start
     assert find_log_record(caplog, logging.INFO, ["Application shutdown complete."])
     assert (
         find_log_record(caplog, logging.INFO, ["All components started successfully"])
@@ -298,8 +329,11 @@ def test_health_check_detects_dead_thread_and_raises_apprunfailure(
 
     health_check_failure_message_regex = r"Health-check failure: Component 'directory_scanner' \(name: 'scanner_mock_obj'\) died\."
 
+    # Cast our SimpleNamespace fixture to the real AppContext for mypy
+    ctx = cast(AppContext, mock_app_context)
+
     with pytest.raises(AppRunFailureError, match=health_check_failure_message_regex):
-        app_module.run(mock_app_context)
+        app_module.run(ctx)
 
     assert mock_app_context.shutdown_event.is_set()
 

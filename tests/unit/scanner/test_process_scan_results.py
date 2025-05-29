@@ -261,9 +261,7 @@ def test_complex_scenario(
     # We only call the 'active' and 'present' helpers on non‐lost files,
     # i.e. everything except p2_becomes_lost:
     expected_active_calls = [
-        call(record=st)
-        for p, st in mocked_next_states.items()
-        if p != p2_becomes_lost
+        call(record=st) for p, st in mocked_next_states.items() if p != p2_becomes_lost
     ]
     assert mock_is_active.call_args_list == expected_active_calls
 
@@ -280,19 +278,19 @@ def test_complex_scenario(
 
     # --- Assert INFO Logs (Precise Check using find_log_record) ---
     lost_log = find_log_record(
-        caplog, logging.INFO, ["Identified a new file as LOST", str(p2_becomes_lost)]
+        caplog, logging.INFO, ["Identified file as LOST", str(p2_becomes_lost)]
     )
     assert lost_log is not None
     # Example of checking args if needed: assert lost_log.args[3] == pytest.approx(lost_timeout_val)
 
     stuck_log = find_log_record(
-        caplog, logging.INFO, ["Identified file as STUCK ACTIVE", str(p3_becomes_stuck)]
+        caplog, logging.WARN, ["Identified file as STUCK ACTIVE", str(p3_becomes_stuck)]
     )
     assert stuck_log is not None
 
     present_long_log = find_log_record(
         caplog,
-        logging.INFO,
+        logging.WARN,
         ["File", str(p7_long_not_active), "present too long", "but NOT active"],
     )
     assert present_long_log is not None

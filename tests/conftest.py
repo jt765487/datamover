@@ -4,7 +4,7 @@ Global pytest fixtures for the DataMover application test suite.
 This file provides:
 - Foundational fixtures for test environments (temporary directories, real filesystem access).
 - Default configurations (both real and mocked) for the application.
-- Generic mock objects for common application protocols and dependencies.
+- Generic mock objects for common application protocolpiks and dependencies.
 - Setup fixtures for unit-testing specific components like RetryableFileSender.
 """
 

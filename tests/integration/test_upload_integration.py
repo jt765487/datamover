@@ -602,7 +602,7 @@ class TestUploaderIntegration:
         assert any(
             "Source file" in rec.message
             and str(abs_path_to_vanish) in rec.message
-            and "vanished before send attempt" in rec.message
+            and "vanished before initial processing attempt" in rec.message
             and rec.name == "datamover.uploader.send_file_with_retries"
             and rec.levelno == logging.WARNING
             for rec in caplog.records
