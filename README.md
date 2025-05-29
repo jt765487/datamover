@@ -100,10 +100,6 @@ The main configuration file *for the installer scripts within the bundle* is loc
     BASE_DIR_CONFIG="/var/tmp/testme" # For testing; consider /opt/exportcliv2 for production
     WHEELHOUSE_SUBDIR="wheelhouse"
     LOG_DIR_CONFIG="/var/log/exportcliv2/" # Base for application logs
-    # These might be used by install_base_exportcliv2.sh to populate /etc/default/exportcliv2_base_vars
-    # DEFAULT_INSTANCE_STARTTIME_OFFSET="3 minutes ago"
-    # DEFAULT_INSTANCE_ENDTIME_VALUE="-1"
-    # DEFAULT_INSTANCE_APP_CONFIG_CONTENT="mining_delta_sec=120"
     ```
     > **Note on Quotes:** In `.ini` style files, quotes around values are generally optional unless the value contains spaces or special characters.
 
