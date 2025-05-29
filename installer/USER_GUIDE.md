@@ -1,469 +1,719 @@
-## Application Suite Deployment and Management Guide - Version 2.2
+## Application Suite Deployment and Management Guide
 
-**Document Version:** 2.2
-**Application Suite Orchestrator Version:** v2.4.6
-**(Individual component script versions: Base Installer v1.3.2, Instance Configurator v4.1.0 (with updated output), Service Manager v1.3.2)**
+**Document Version:** 2.3 (reflecting updates to align with script changes)
+**Application Suite Orchestrator Version:** v2.4.8
+**Patch Script Version:** v1.0.0
+**(Individual component script versions: Base Installer v1.3.2, Instance Configurator v4.1.0, Service Manager v1.3.2)**
 
-This guide provides comprehensive instructions for deploying, configuring, updating, and managing the "exportcliv2" application suite. This suite includes the main exportcliv2 data processing application and the bitmover Python-based PCAP upload service.
+This guide provides comprehensive instructions for deploying, configuring, updating, and managing the "exportcliv2" application suite. This suite includes the main `exportcliv2` data export client and the Bitmover service (a Python-based service responsible for PCAP uploads).
 
 ## Table of Contents:
 
 1.  Introduction
-2.  Prerequisites
-3.  Deployment Package Structure
-4.  Initial Environment Setup (Fresh Install)
-    *   Step 1: Prepare install-app.conf
-    *   Step 2: Run the Orchestrator Script for Installation
-    *   Understanding Orchestrator Actions During --install
-5.  Post-Installation Configuration
-    *   Critical: exportcliv2 Instance Configuration (<INSTANCE_NAME>.conf)
-    *   Application-Specific Configuration (<INSTANCE_NAME>_app.conf)
-    *   Shared Authentication (common.auth.conf) (If used)
-    *   bitmover Service Configuration (config.ini)
-    *   Restarting Services After Configuration Changes
-6.  Updating Application Components
-    *   Bundle Update Workflow (Using a New Package)
-    *   Surgical Update Workflow (Applying Specific Files)
-    *   Understanding Orchestrator Actions During --update
-    *   Post-Update: Manual Service Restarts
-7.  Managing Services (Everyday Activities)
-    *   Using exportcli-manage (or manage_services.sh)
-    *   Common Commands
-8.  Troubleshooting
-9.  Appendix A: Key Configuration and Template File Details
-    *   A.1 install-app.conf (Primary Input Configuration)
-    *   A.2 run_exportcliv2_instance.sh.template (Wrapper Script)
-    *   A.3 common.auth.conf (Shared Authentication)
-    *   A.4 config.ini.template (Bitmover Configuration)
+2.  Deployment Package Structure
+3.  Step 0: Prerequisites and System Preparation
+4.  Step 1: Prepare the Installation Package (Unpack)
+5.  Step 2: Review Bundle Installer Configuration (`install-app.conf`)
+6.  Step 3: Run the Initial Installation (`deploy_orchestrator.sh --install`)
+7.  Step 4: Post-Installation Instance Configuration (Live System)
+8.  Step 5: Restart `exportcliv2` Instance After Configuration
+9.  Step 6: Verify Service Operation
+10. Step 7: Understanding Key System Directories and Files
+11. Step 8: Checking Logs
+12. Step 9: Preparing the Installation Bundle with a Patch (`install_patch.sh`)
+13. Step 10: Deploying a Prepared/Patched Bundle (`deploy_orchestrator.sh --update`)
+14. Step 11: Updating Authentication Credentials
+15. Troubleshooting
+16. Appendix A: Key Configuration and Template File Details
+    *   A.1 `install-app.conf` (Bundle's Primary Input Configuration)
+    *   A.2 `run_exportcliv2_instance.sh.template` (Instance Wrapper Script)
+    *   A.3 `/etc/exportcliv2/common.auth.conf` (Shared Authentication)
+    *   A.4 `/etc/exportcliv2/config.ini` (Bitmover Service Configuration)
     *   A.5 Systemd Unit Templates Overview
-10. Appendix B: System Architecture Diagram (Conceptual)
+17. Further Information
+
+---
+
+**Required Privileges & User (Applies to all relevant steps):**
+All installation, patching, and service management commands in this guide **must be executed as the `root` user.**
+*   Log in directly as `root`, or from a non-root user with sudo privileges, switch to a root shell:
+    ```bash
+    sudo su -
+    ```
+*   Once you are `root`, you can run the script commands directly (e.g., `./deploy_orchestrator.sh --install`).
 
 ---
 
 ## 1. Introduction
+*(Understand the components of the suite.)*
 
-The exportcliv2 application suite is designed for robust data processing and management. It consists of:
+The `exportcliv2` application suite is designed for robust data processing and management. It consists of:
 
-*   **exportcliv2**: A high-performance data processing application, typically run as multiple instances, each configured for a specific data source or task.
-*   **bitmover**: A Python service responsible for uploading PCAP files generated or processed by the system.
+*   **`exportcliv2` client:** A high-performance data processing application, typically run as multiple instances, each configured for a specific data source or task.
+*   **Bitmover service:** A Python-based service responsible for managing and uploading PCAP files generated or processed by the system.
 
-This guide details the use of a set of deployment and management scripts to install, configure, update, and operate this suite on an Oracle Linux 9 system.
-
----
-
-## 2. Prerequisites
-
-*   **Operating System**: Oracle Linux 9 (or a compatible RHEL 9 derivative).
-*   **User Privileges**: `sudo` or `root` access is required for all installation, update, and service management tasks.
-*   **Required System Packages**:
-    *   `python3` and `python3-venv` (The `install_base_exportcliv2.sh` script uses `python3 -m venv` to create a virtual environment for the bitmover service; `python3-venv` or its equivalent for your Python 3 installation must be present).
-    *   Standard utilities: `flock`, `date`, `chmod`, `dirname`, `basename`, `readlink`, `realpath`, `mktemp`, `cp`, `sed`, `touch`, `getent`, `groupadd`, `useradd`, `install`, `systemctl`, `find`, `id`, `chown`, `ln`, `pushd`, `popd`, `mkdir`, `printf`. These are generally present on a standard server installation. The Orchestrator script performs a check for its core dependencies.
-*   **Application Artifacts**: You must have the `exportcliv2-suite-vX.Y.Z.tar.gz` deployment package.
+This guide details the use of a set of deployment and management scripts to install, configure, update, and operate this suite on an Oracle Linux 9 system (or compatible).
 
 ---
 
-## 3. Deployment Package Structure
+## 2. Deployment Package Structure
+*(Know what's in the bundle you receive.)*
 
-The deployment process starts with the `exportcliv2-suite-vX.Y.Z.tar.gz` package. After extraction, it creates a top-level directory named `exportcliv2-suite-vX.Y.Z/`.
+The deployment process starts with the `exportcliv2-suite-vX.Y.Z.tar.gz` package. After extraction, it creates a top-level directory, for example, `exportcliv2-suite-v0.1.2/`.
 
-**All operations involving `deploy_orchestrator.sh` should be initiated from within this extracted `exportcliv2-suite-vX.Y.Z/` directory.**
+> **Important:** All operations involving `deploy_orchestrator.sh` and `install_patch.sh` must be initiated from within this extracted bundle directory.
 
-The structure of the extracted package is as follows:
+The structure of the extracted package is typically as follows:
 
 ```
 exportcliv2-suite-vX.Y.Z/
-├── deploy_orchestrator.sh                # Main script to drive installation or updates (v2.4.6)
-├── QUICK_START_GUIDE.md                  # Quick start guide
-├── USER_GUIDE.md                         # This comprehensive user guide
+├── deploy_orchestrator.sh       # Main script for installation or updates (e.g., v2.4.8)
+├── install_patch.sh             # Script to prepare this bundle with patches (e.g., v1.0.0)
+├── QUICK_START_GUIDE.md         # This quick start guide
+├── USER_GUIDE.md                # (If present) This more comprehensive user guide
 │
-└── exportcliv2-deploy/                   # Deployment subdirectory
-    ├── install_base_exportcliv2.sh       # Core installer for base system (v1.3.2)
-    ├── configure_instance.sh             # Script to set up individual exportcliv2 instances
-    ├── manage_services.sh                # Script for everyday service management (v1.3.2)
+└── exportcliv2-deploy/          # Deployment subdirectory
+    ├── install_base_exportcliv2.sh # Core installer for base system components
+    ├── configure_instance.sh    # Script to set up individual exportcliv2 instances
+    ├── manage_services.sh       # Core script for service management (used by exportcli-manage)
     │
-    ├── install-app.conf                  # Primary configuration for the installer scripts, including settings for core paths and an optional override for Bitmover's log directory.
+    ├── install-app.conf         # Primary configuration for the installer scripts in this bundle
     │
-    ├── exportcliv2-vA.B.C                # The versioned exportcliv2 binary itself
-    ├── datamover-vX.Y.Z-py3-none-any.whl # The versioned Python wheel for bitmover
+    ├── exportcliv2-vA.B.C       # The versioned exportcliv2 binary itself
+    ├── datamover-vX.Y.Z-...whl  # The versioned Python wheel for the Bitmover service
     │
-    ├── config_files/                     # Directory for config file templates
-    │   ├── common.auth.conf              # (Optional) For shared authentication tokens
-    │   ├── config.ini.template           # Template for bitmover's INI configuration
-    │   └── run_exportcliv2_instance.sh.template # Wrapper script template for exportcliv2
+    ├── config_files/            # Directory for config file templates used during installation
+    │   ├── common.auth.conf     # Template/default for shared authentication tokens
+    │   ├── config.ini.template  # Template for Bitmover's INI configuration
+    │   └── run_exportcliv2_instance.sh.template # Template for the instance wrapper script
     │
-    └── systemd_units/                    # Directory for systemd unit file templates
-        ├── bitmover.service.template
-        ├── exportcliv2@.service.template   # Utilizes systemd features for instance-specific log directory management.
-        ├── exportcliv2-restart@.path.template
-        └── exportcliv2-restart@.service.template
+    ├── systemd_units/           # Directory for systemd unit file templates
+    │   ├── bitmover.service.template
+    │   ├── exportcliv2@.service.template
+    │   ├── exportcliv2-restart@.path.template
+    │   └── exportcliv2-restart@.service.template
+    │
+    └── wheelhouse/              # (Optional) Offline Python dependency wheels
+        └── ...
 ```
 
 ---
 
-## 4. Initial Environment Setup (Fresh Install)
+## 3. Step 0: Prerequisites and System Preparation
+*(Ensure system compatibility and required tools are ready.)*
 
-This procedure installs the entire application suite from scratch.
+1.  **System Compatibility:**
+    *   This suite is designed for Oracle Linux 9 or compatible RHEL 9 derivatives (e.g., AlmaLinux 9, Rocky Linux 9).
 
-1.  **Extract the Package:**
+2.  **System Updates & Repository Access:**
+    *   Ensure your system is registered with appropriate subscriptions (if applicable, e.g., for RHEL) and can access package repositories.
+    *   It's recommended to have an up-to-date system:
+        ```bash
+        dnf update -y
+        ```
+
+3.  **Installation Package:**
+    *   Ensure you have the application suite package: `exportcliv2-suite-vX.Y.Z.tar.gz`.
+        *(Replace `vX.Y.Z` with the actual version you are installing, e.g., `v0.1.2`)*.
+
+4.  **Python 3 Environment:**
+    *   The Bitmover service requires Python 3 (typically Python 3.9.x on Oracle Linux 9) and its standard `venv` module.
+    *   As `root`, verify Python 3 and `venv` module availability:
+        ```bash
+        python3 --version
+        python3 -m venv --help
+        ```
+    *   If Python 3 is missing or `venv` is unavailable, install it as `root`:
+        ```bash
+        dnf install python3 -y
+        ```
+
+---
+
+## 4. Step 1: Prepare the Installation Package (Unpack)
+*(Unpack the suite to access installer scripts.)*
+
+1.  Copy `exportcliv2-suite-vX.Y.Z.tar.gz` to your server (e.g., into `/root/`).
+2.  Log in as `root` (if not already) and navigate to where you placed the package.
+3.  Extract the archive:
     ```bash
-    tar -xzvf exportcliv2-suite-vX.Y.Z.tar.gz
+    tar vxf exportcliv2-suite-vX.Y.Z.tar.gz
+    ```
+    This creates a directory like `exportcliv2-suite-vX.Y.Z/`.
+4.  Navigate into the extracted directory:
+    ```bash
     cd exportcliv2-suite-vX.Y.Z/
     ```
 
-### 4.1 Step 1: Prepare `install-app.conf`
-
-Before running the Orchestrator, configure `exportcliv2-deploy/install-app.conf`. This file dictates crucial settings for the installation.
-
-1.  Open `exportcliv2-deploy/install-app.conf` in a text editor.
-2.  Verify and/or Set the following **MANDATORY** variables:
-    *   `DEFAULT_INSTANCES_CONFIG`: A space-separated list of instance names (e.g., `"ABC DEF GHI"`). This list **must be defined and non-empty** if you intend to run `deploy_orchestrator.sh --install` without the `-i` flag to specify instances directly. These will be the default instances configured.
-    *   `VERSIONED_APP_BINARY_FILENAME`: The exact filename of your `exportcliv2` binary (e.g., `"exportcliv2-v0.4.0-B1771-24.11.15"`). This file must be present in the `exportcliv2-deploy/` directory. (This is usually pre-filled by the packaging process, but verification is good practice).
-    *   `VERSIONED_DATAMOVER_WHEEL_FILENAME`: The exact filename of your bitmover Python wheel (e.g., `"datamover-0.1.0-py3-none-any.whl"`). This file must be present in the `exportcliv2-deploy/` directory. (This is usually pre-filled by the packaging process, but verification is good practice).
-    *   `REMOTE_HOST_URL_CONFIG`: The full URL where bitmover will upload files (e.g., `"http://data-ingest.example.com:8989/pcap"`).
-    *   `EXPORT_TIMEOUT_CONFIG`: The default timeout in seconds for `exportcliv2` instances (e.g., `"15"`). This value is stored in `/etc/default/exportcliv2_base_vars` for `configure_instance.sh` to use.
-
-3.  Additionally, review and optionally modify other settings in `install-app.conf` such as:
-    *   `USER_CONFIG` (default: `"exportcliv2_user"`)
-    *   `GROUP_CONFIG` (default: `"exportcliv2_group"`, your example uses `"datapipeline_group"`)
-    *   `BASE_DIR_CONFIG` (default: `"/opt/exportcliv2"`)
-    *   `BITMOVER_LOG_DIR_CONFIG` (default: `"/var/log/exportcliv2/bitmover"`)
-    Detailed comments within the file explain each option (See Appendix A.1).
-
-### 4.2 Step 2: Run the Orchestrator Script for Installation
-
-From the `exportcliv2-suite-vX.Y.Z/` directory:
-
-1.  Execute the `deploy_orchestrator.sh` script with the `--install` flag. You will need `sudo` privileges.
-    *   To install and configure default instances (as defined by `DEFAULT_INSTANCES_CONFIG` in `install-app.conf`):
-        ```bash
-        sudo ./deploy_orchestrator.sh --install
-        ```
-    *   To install and configure specific instances (e.g., `site1`, `lab_test`), overriding the defaults from `install-app.conf`:
-        ```bash
-        sudo ./deploy_orchestrator.sh --install -i "site1,lab_test"
-        ```
-    *   To perform a dry run (see what commands would be executed without making changes):
-        ```bash
-        sudo ./deploy_orchestrator.sh --install -n
-        ```
-        (You can combine `-n` with `-i "site1,lab_test"` if desired).
-    *   To force reconfiguration of instances if their configuration files already exist, or to auto-confirm in non-interactive environments:
-        ```bash
-        sudo ./deploy_orchestrator.sh --install --force 
-        # (This will use default instances from install-app.conf)
-        # OR
-        sudo ./deploy_orchestrator.sh --install -i site1 --force
-        ```
-        The `--force` flag with `--install` will overwrite existing instance configurations. For all modes, if running in a non-interactive (non-TTY) environment, `--force` assumes 'yes' to the main confirmation prompt.
-
-2.  The script will perform dependency checks, acquire an execution lock, determine the configuration file, source it, and then (if in an interactive TTY) ask for confirmation:
-    ```
-    Proceed with install for instances: (ABC,DEF,GHI) using source '/root/exportcliv2-suite-vX.Y.Z'? [y/N]
-    ```
-    (The instance list `(ABC,DEF,GHI)` will reflect `DEFAULT_INSTANCES_CONFIG` if `-i` was not used).
-3.  Type `y` and press Enter to continue (unless in dry-run or non-TTY with `--force`).
-
-### 4.3 Understanding Orchestrator Actions During `--install`
-
-When run with `--install`, the `deploy_orchestrator.sh` script performs:
-
-*   **Initial Checks & Argument Parsing**: Verifies dependencies, parses arguments (including `-s` and `-c` to locate the correct `install-app.conf`), and acquires a lock.
-*   **Configuration Sourcing**: Sources the effective `install-app.conf` to read variables like `DEFAULT_INSTANCES_CONFIG`. If `-i` is not used, it validates that `DEFAULT_INSTANCES_CONFIG` is set and non-empty.
-*   **Directory Navigation**: Sets its working directory to the resolved source directory.
-*   **File Verification**: Ensures sub-scripts and the effective `install-app.conf` (or its temporary copy for surgical updates) are present within the `exportcliv2-deploy/` subdirectory.
-*   **Script Permissions**: Makes sub-scripts in `exportcliv2-deploy/` executable.
-*   **Run Base Installer (`./exportcliv2-deploy/install_base_exportcliv2.sh`)**:
-    *   The orchestrator passes the `--operation-type install` flag to this sub-script.
-    *   The sub-script logs "Starting installation..."
-    *   Reads settings from `exportcliv2-deploy/install-app.conf`.
-    *   Creates the application user/group (e.g., `exportcliv2_user`, `datapipeline_group`).
-    *   Creates core application directory structures, including the base log directory `/var/log/exportcliv2/` (by default) and the specific Bitmover log directory (default: `/var/log/exportcliv2/bitmover/`).
-    *   Copies binaries and wheel to installation locations, creates symlinks.
-    *   Sets up Python virtual environment for bitmover and installs the wheel.
-    *   Deploys wrapper scripts and systemd unit files from templates.
-    *   Deploys common configuration files.
-    *   Creates `/etc/default/exportcliv2_base_vars`.
-    *   Installs `manage_services.sh` and creates `/usr/local/bin/exportcli-manage` symlink.
-    *   Suppresses its generic restart advice because it was called with `--operation-type install`.
-*   **Configure Instances (`./exportcliv2-deploy/configure_instance.sh`)**:
-    *   For each instance name (from `-i` flag, or from `DEFAULT_INSTANCES_CONFIG` in `install-app.conf` if `-i` was not used):
-        *   Runs `configure_instance.sh -i <INSTANCE_NAME> [--force if orchestrator had it]`.
-        *   Creates `/etc/exportcliv2/<INSTANCE_NAME>.conf` and `/etc/exportcliv2/<INSTANCE_NAME>_app.conf`.
-        *   The "Next Steps" output from this script will correctly point to `exportcli-manage`.
-*   **Manage Services (`./exportcliv2-deploy/manage_services.sh`)**:
-    *   Enables and Starts the main `bitmover.service`.
-    *   If instances are being processed (from `-i` or `DEFAULT_INSTANCES_CONFIG`):
-        *   For each such instance: Enables (`--enable`) and then starts (`--start`) its services (e.g., `exportcliv2@<INSTANCE_NAME>.service` and related path units).
-*   **Completion**: Releases the lock and prints a final summary.
-
 ---
 
-## 5. Post-Installation Configuration
+## 5. Step 2: Review Bundle Installer Configuration (`install-app.conf`)
+*(Check the bundle's default settings before installation.)*
 
-After a successful fresh installation, review and adjust instance configurations.
+The main configuration file *for the installer scripts within this specific bundle* is located at `exportcliv2-deploy/install-app.conf`.
 
-### 5.1 Critical: `exportcliv2` Instance Configuration (`<INSTANCE_NAME>.conf`)
-
-For each `exportcliv2` instance (e.g., `ABC`), edit its environment configuration file:
-
-*   **File location**: `/etc/exportcliv2/<INSTANCE_NAME>.conf` (e.g., `/etc/exportcliv2/ABC.conf`).
-*   This file provides environment variables to the `run_exportcliv2_instance.sh` wrapper. `configure_instance.sh` generates it with defaults:
+1.  **View the Bundle's Installer Configuration:**
+    ```bash
+    cat exportcliv2-deploy/install-app.conf
+    ```
+    ### Key settings you might see (example values):
     ```ini
-    # Generated by configure_instance.sh ...
-    EXPORT_TIMEOUT="15" # From EXPORT_TIMEOUT_CONFIG in install-app.conf
-    EXPORT_SOURCE="ABC" # Defaults to instance name
-    EXPORT_STARTTIME_OFFSET_SPEC="3 minutes ago" # Default
-    EXPORT_ENDTIME="-1" # Default
-    EXPORT_IP="10.0.0.1" # Default, **MUST EDIT for your target IP**
-    EXPORT_PORTID="1"    # Default, **MUST EDIT for your target port/interface**
-    EXPORT_APP_CONFIG_FILE_PATH="/etc/exportcliv2/ABC_app.conf" # Default path
+    # exportcliv2-deploy/install-app.conf (in your bundle)
+    DEFAULT_INSTANCES_CONFIG="AAA" # Default exportcliv2 instance(s) to set up
+    VERSIONED_APP_BINARY_FILENAME="exportcliv2-0.4.0-B1771-24.11.15" # Initial binary
+    VERSIONED_DATAMOVER_WHEEL_FILENAME="datamover-0.1.2-py3-none-any.whl"
+    REMOTE_HOST_URL_CONFIG="http://192.168.0.180:8989/pcap"
+    EXPORT_TIMEOUT_CONFIG="15"
+    USER_CONFIG="exportcliv2_user"
+    GROUP_CONFIG="datapipeline_group"
+    BASE_DIR_CONFIG="/var/tmp/testme" # For testing; consider /opt/exportcliv2 for production
+    WHEELHOUSE_SUBDIR="wheelhouse"
+    LOG_DIR_CONFIG="/var/log/exportcliv2/" # Base for application logs
+    # These might be used by install_base_exportcliv2.sh to populate /etc/default/exportcliv2_base_vars
+    # DEFAULT_INSTANCE_STARTTIME_OFFSET="3 minutes ago"
+    # DEFAULT_INSTANCE_ENDTIME_VALUE="-1"
+    # DEFAULT_INSTANCE_APP_CONFIG_CONTENT="mining_delta_sec=120"
     ```
-*   **Key variables to set for your environment**: `EXPORT_IP` and `EXPORT_PORTID`. You might also adjust `EXPORT_SOURCE`.
+    > **Note on Quotes:** In `.ini` style files, quotes around values are generally optional unless the value contains spaces (e.g., `DEFAULT_INSTANCES_CONFIG="AAA BBB"` would require quotes) or special characters.
 
-### 5.2 Application-Specific Configuration (`<INSTANCE_NAME>_app.conf`)
+    > **Note on Production Paths:** For production deployments, consider changing `BASE_DIR_CONFIG` in this bundle file to a path like `/opt/exportcliv2` *before* running the first installation.
 
-(Content as before - this section typically contains application-level JSON or similar structured data for `exportcliv2` itself.)
-
-### 5.3 Shared Authentication (`common.auth.conf`) (If used)
-
-(Content as before - this file typically contains shared API keys or tokens used by `exportcliv2` instances.)
-
-### 5.4 bitmover Service Configuration (`config.ini`)
-
-This file, located at `/etc/exportcliv2/config.ini` (by default), configures the bitmover service, including the `remote_host_url` and its specific logging path (populated during installation from `install-app.conf`).
-
-### 5.5 Restarting Services After Configuration Changes
-
-If you modify any of the above configuration files after the initial installation, restart the affected services:
-Use `exportcli-manage` (symlinked to `/usr/local/bin/exportcli-manage`):
-
-*   For `/etc/exportcliv2/config.ini` (bitmover):
+2.  **Edit (Optional, Before First Install):**
+    If you need to change settings like `DEFAULT_INSTANCES_CONFIG` or `BASE_DIR_CONFIG` *before the very first installation*, edit the file:
     ```bash
-    sudo exportcli-manage --restart
+    vi exportcliv2-deploy/install-app.conf
     ```
-    *(Note: This command will display a warning that the operation may take some time if the service is slow to respond.)*
-
-*   For instance configs (`<INSTANCE_NAME>.conf`, `<INSTANCE_NAME>_app.conf`, or `common.auth.conf` affecting an instance):
-    ```bash
-    sudo exportcli-manage -i <INSTANCE_NAME> --restart
-    ```
-    *(Note: This command will display a warning that the operation may take some time if the service is slow to respond.)*
 
 ---
 
-## 6. Updating Application Components
+## 6. Step 3: Run the Initial Installation (`deploy_orchestrator.sh --install`)
+*(Execute the main deployment script to install base components and default instances.)*
 
-This section describes how to update the `exportcliv2` binary or the bitmover Python wheel. **The `-r` / `--restart-services` option has been removed from `deploy_orchestrator.sh`. Services must be restarted manually after an update.**
+1.  From within the `exportcliv2-suite-vX.Y.Z/` directory, execute:
+    ```bash
+    ./deploy_orchestrator.sh --install
+    ```
+2.  The script will list the instances to be configured (from `DEFAULT_INSTANCES_CONFIG`) and ask for confirmation. Type `y` and press Enter.
+3.  Upon successful completion, you will see a message like:
+    ```
+    # ... (detailed installation log output) ...
+    YYYY-MM-DDTHH:MM:SSZ [INFO] ▶ Orchestrator finished successfully.
+    ```
 
-### 6.1 Bundle Update Workflow (Using a New Package)
+---
 
-1.  **Obtain and Extract New Package**: (Same as fresh install)
-2.  **Prepare `install-app.conf`**: (Same as fresh install - ensure `VERSIONED_...` filenames are correct for the new bundle).
-3.  **Run Orchestrator in Update Mode**:
-    *   From the root of the new `exportcliv2-suite-vNEW_VERSION/` directory:
+## 7. Step 4: Post-Installation Instance Configuration (Live System)
+*(Configure the live system's settings for each `exportcliv2` instance, e.g., "AAA".)*
+
+After the base installation, you **must** edit the system configuration file for each `exportcliv2` instance to define its specific data source target. These files are located on the live system in `/etc/exportcliv2/`.
+
+1.  **Edit the Instance Environment Configuration File:**
+    For instance "AAA", edit:
+    ```bash
+    vi /etc/exportcliv2/AAA.conf
+    ```
+2.  **Update Instance-Specific Settings:**
+    Locate and update `EXPORT_IP` and `EXPORT_PORTID` according to your environment. The file content will be similar to:
+    ```ini
+    # /etc/exportcliv2/AAA.conf (on the live system)
+    # Generated by configure_instance.sh on YYYY-MM-DDTHH:MM:SSZ
+    EXPORT_TIMEOUT="15"
+    EXPORT_SOURCE="AAA"
+    EXPORT_STARTTIME_OFFSET_SPEC="3 minutes ago"
+    EXPORT_ENDTIME="-1"
+    # ---- EDIT THESE TWO LINES FOR YOUR ENVIRONMENT ----
+    EXPORT_IP="<YOUR_DATA_SOURCE_IP>" # e.g., "10.0.0.1"
+    EXPORT_PORTID="<YOUR_PORT_ID>"    # e.g., "1"
+    # -------------------------------------------------
+    EXPORT_APP_CONFIG_FILE_PATH="/etc/exportcliv2/AAA_app.conf"
+    ```
+3.  Save the changes and exit the editor.
+4.  **Review Application-Specific Configuration (Optional):**
+    Review and edit `/etc/exportcliv2/AAA_app.conf` if needed. By default, it may contain:
+    ```ini
+    mining_delta_sec=120
+    ```
+
+---
+
+## 8. Step 5: Restart `exportcliv2` Instance After Configuration
+*(Apply the instance configuration changes.)*
+
+For the changes in `/etc/exportcliv2/AAA.conf` to take effect, restart the instance:
+```bash
+exportcli-manage -i AAA --restart
+```
+> **Note:** `exportcli-manage` is a user-friendly wrapper script installed by the suite, typically at `/usr/local/bin/exportcli-manage`. It uses `systemctl` to manage the `bitmover.service` and `exportcliv2@<INSTANCE_NAME>.service` units.
+
+---
+
+## 9. Step 6: Verify Service Operation
+*(Check that both the Bitmover service and your `exportcliv2` instance are active.)*
+
+1.  **Check the Bitmover service status:**
+    ```bash
+    exportcli-manage --status
+    ```
+    Look for `Active: active (running)` for `bitmover.service`.
+
+2.  **Check the `exportcliv2` instance "AAA" status:**
+    ```bash
+    exportcli-manage -i AAA --status
+    ```
+    Look for `Active: active (running)` for `exportcliv2@AAA.service`.
+
+---
+
+## 10. Step 7: Understanding Key System Directories and Files
+*(Learn where important application files and data are located on the system.)*
+
+Key paths for the installed application are determined during installation and recorded in `/etc/default/exportcliv2_base_vars`.
+*   **Base Application Directory:** (e.g., `/var/tmp/testme/`). Check `BASE_DIR` in `/etc/default/exportcliv2_base_vars`.
+    *   `bin/`: Contains executables (e.g., `exportcliv2-0.4.0-...`), the `exportcliv2` symlink pointing to the active binary, helper scripts like `run_exportcliv2_instance.sh` and `manage_services.sh`.
+    *   `csv/`: For CSV metadata files (e.g., `AAA.csv`) and `.restart` trigger files.
+    *   `datamover_venv/`: Python virtual environment for the Bitmover service.
+    *   `source/`, `worker/`, `uploaded/`, `dead_letter/`: Working directories for the Bitmover service.
+*   **System Configuration Directory:** `/etc/exportcliv2/` (Check `ETC_DIR` in `/etc/default/exportcliv2_base_vars`).
+    *   Instance configurations: e.g., `AAA.conf`, `AAA_app.conf`.
+    *   Common configurations: `common.auth.conf`, `config.ini` (for the Bitmover service).
+*   **Base Log Directory:** `/var/log/exportcliv2/` (Check `BITMOVER_LOG_DIR`'s parent or instance log parent in `/etc/default/exportcliv2_base_vars`).
+    *   `bitmover/`: Contains `app.log.jsonl` (main Bitmover log) and `audit.log.jsonl` (upload audit log).
+    *   `AAA/` (or other instance names): Contains instance-specific file logs (e.g., `exportcliv2_<DATE>.log`). `exportcliv2` instances also log to the system journal.
+
+---
+
+## 11. Step 8: Checking Logs
+*(View logs for troubleshooting or monitoring.)*
+
+Use `exportcli-manage` or view files directly.
+*   **Follow Bitmover service main logs:**
+    ```bash
+    exportcli-manage --logs-follow
+    ```
+*   **Follow `exportcliv2` instance "AAA" journald logs:**
+    ```bash
+    exportcli-manage -i AAA --logs-follow
+    ```
+*   **Example of viewing a file-based log directly:**
+    ```bash
+    tail -f /var/log/exportcliv2/bitmover/audit.log.jsonl
+    ```
+
+---
+
+## 12. Step 9: Preparing the Installation Bundle with a Patch (`install_patch.sh`)
+*(Update your local installation bundle with a new binary or wheel before deploying it to the system.)*
+
+1.  **Navigate to your Installation Package Directory:**
+    This is the directory you extracted in Step 1 (e.g., `/root/exportcliv2-suite-vX.Y.Z/`), which contains `install_patch.sh`.
+    ```bash
+    cd /root/exportcliv2-suite-vX.Y.Z/ # Adjust to your actual path
+    ```
+
+2.  **Run `install_patch.sh` with an *absolute path* to the new component:**
+    *   **To prepare the bundle to use a different binary already present *within this bundle's staging area*** (e.g., an emulator like `exportcliv8` located in `./exportcliv2-deploy/`):
+        Ensure the desired binary (e.g., `exportcliv8`) exists in `./exportcliv2-deploy/`.
         ```bash
-        sudo ./deploy_orchestrator.sh --update
+        # Example: In /root/exportcliv2-suite-vX.Y.Z/
+        ./install_patch.sh --new-binary "$(pwd)/exportcliv2-deploy/exportcliv8"
         ```
-4.  **Post-Update: Manual Service Restart**: After the orchestrator completes the update, you must manually restart the relevant services using `exportcli-manage`. See Section 6.4.
+        This updates the bundle's `install-app.conf` to reference `exportcliv8`.
 
-### 6.2 Surgical Update Workflow (Applying Specific Files)
+    *   **To prepare the bundle with an *externally provided* new binary** (a patch file not originally in this bundle):
+        Suppose the new binary patch is located at `/tmp/exportcliv2-patch-vNEW`.
+        ```bash
+        # Example: In /root/exportcliv2-suite-vX.Y.Z/
+        ./install_patch.sh --new-binary /tmp/exportcliv2-patch-vNEW
+        ```
+        This copies `exportcliv2-patch-vNEW` into this bundle's `./exportcliv2-deploy/` directory and updates the `install-app.conf`.
 
-1.  **Obtain New Artifact(s)**: (e.g., download a new binary or wheel)
-2.  **Run Orchestrator in Update Mode**:
-    (Same as before, e.g.)
-    ```bash
-    # Example: Update only the binary
-    sudo ./deploy_orchestrator.sh --update --new-binary /path/to/downloaded/new_exportcliv2.bin
-
-    # Example: Update only the wheel
-    sudo ./deploy_orchestrator.sh --update --new-wheel /path/to/downloaded/new_datamover.whl
-    ```
-3.  **Post-Update: Manual Service Restart**: After the orchestrator completes the update, you must manually restart the relevant services using `exportcli-manage`. See Section 6.4.
-
-### 6.3 Understanding Orchestrator Actions During `--update`
-
-When run with `--update`, `deploy_orchestrator.sh`:
-
-*   Performs initial checks, argument parsing, sources `install-app.conf`, and acquires a lock.
-*   **For Surgical Updates (`--new-binary` or `--new-wheel`)**: (Same as before - staging files into a temporary `exportcliv2-deploy` structure, creating a temporary `install-app.conf` with updated filenames).
-*   **Runs Base Installer (`./exportcliv2-deploy/install_base_exportcliv2.sh`)**:
-    *   The orchestrator passes the `--operation-type update` flag to this sub-script.
-    *   The sub-script logs "Starting update..."
-    *   (Rest of the actions like copying binary, updating symlink, upgrading wheel, re-processing systemd units are the same as install, but target existing locations).
-    *   Existing instance configurations (`<INSTANCE_NAME>.conf`, `<INSTANCE_NAME>_app.conf`) are **not** modified.
-    *   The sub-script will display its generic restart advice because it was called with `--operation-type update`.
-*   **Cleanup (for Surgical Updates)**: (Same as before - removes temporary staging directory).
-*   **Final Message**: The orchestrator will display a prominent message instructing the user to manually restart services and provide examples.
-
-### 6.4 Post-Update: Manual Service Restarts (NEW SECTION)
-
-After any `--update` operation using `deploy_orchestrator.sh`, services are **not** automatically restarted. You must do this manually using `exportcli-manage`.
-
-The orchestrator will provide specific advice based on what was updated (e.g., if `--new-binary` or `--new-wheel` was used). Generally:
-
-*   If the Datamover wheel was updated (or if it was a general bundle update where the wheel might have changed): Restart the main bitmover service:
-    ```bash
-    sudo exportcli-manage --restart
-    ```
-*   If the `exportcliv2` binary was updated (or if it was a general bundle update where the binary might have changed): Restart all affected `exportcliv2` instances:
-    ```bash
-    sudo exportcli-manage -i <INSTANCE_NAME_1> --restart
-    sudo exportcli-manage -i <INSTANCE_NAME_2> --restart
-    # Repeat for all active instances that use the updated binary.
-    ```
-    For example, if instances `ABC`, `DEF`, `GHI` were installed:
-    ```bash
-    sudo exportcli-manage -i ABC --restart
-    sudo exportcli-manage -i DEF --restart
-    sudo exportcli-manage -i GHI --restart
-    ```
-*   For a general bundle update (where `deploy_orchestrator.sh --update` was run without `--new-binary` or `--new-wheel`), it's safest to assume both the bitmover service and all `exportcliv2` instances might need restarting.
-*   **Always check the output of the `deploy_orchestrator.sh --update` command for specific restart recommendations.**
-*   *(Note: The `exportcli-manage --restart` command will display a warning that the operation may take some time if a service is slow to stop.)*
+    *   **To prepare the bundle with an *externally provided* new DataMover wheel:**
+        Suppose the new wheel is at `/tmp/datamover-patch-vNEW.whl`.
+        ```bash
+        # Example: In /root/exportcliv2-suite-vX.Y.Z/
+        ./install_patch.sh --new-wheel /tmp/datamover-patch-vNEW.whl
+        ```
+    After `install_patch.sh` completes successfully, it will confirm the bundle is prepared.
 
 ---
 
-## 7. Managing Services (Everyday Activities)
+## 13. Step 10: Deploying a Prepared/Patched Bundle (`deploy_orchestrator.sh --update`)
+*(Apply the changes from your updated local bundle to the live system.)*
 
-The `exportcli-manage` command (a symlink to `manage_services.sh`, script version `v1.3.2`) is your primary tool for controlling and checking the status of the `bitmover` and `exportcliv2` services.
+1.  **Ensure you are still in your Installation Package Directory** (e.g., `/root/exportcliv2-suite-vX.Y.Z/`).
 
-### 7.1 Using `exportcli-manage` (or `manage_services.sh`)
+2.  **Run the Orchestrator in Update Mode:**
+    ```bash
+    ./deploy_orchestrator.sh --update
+    ```
+    Confirm when prompted. This command applies the components specified in the (now patched) bundle's `install-app.conf` to your system.
 
-(Content largely the same - usage examples, help output overview)
-*   Run `exportcli-manage --help` for a full list of commands and options.
-*   It can manage the main `bitmover` service or specific `exportcliv2` instances using the `-i <INSTANCE_NAME>` flag.
+3.  **Restart Affected Services:**
+    The `deploy_orchestrator.sh --update` script will provide guidance.
+    *   **If `exportcliv2` binary changed:** Restart all affected `exportcliv2` instances (e.g., `exportcli-manage -i AAA --restart`).
+    *   **If DataMover wheel changed:** Restart the Bitmover service (`exportcli-manage --restart`).
 
-### 7.2 Common Commands
+4.  **Verify Operation:**
+    Check status and logs. Verify the active binary symlink (replace `/var/tmp/testme` with your `BASE_DIR` from `base_vars`):
+    ```bash
+    ls -l /var/tmp/testme/bin/exportcliv2
+    ```
 
-(Content largely the same, ensure all commands reflect what `exportcli-manage --help` shows)
-Examples:
-*   **Check Status:**
-    ```bash
-    sudo exportcli-manage --status
-    sudo exportcli-manage -i <INSTANCE_NAME> --status
-    ```
-*   **Start Services:**
-    ```bash
-    sudo exportcli-manage --start
-    sudo exportcli-manage -i <INSTANCE_NAME> --start
-    ```
-*   **Stop Services:**
-    ```bash
-    sudo exportcli-manage --stop
-    sudo exportcli-manage -i <INSTANCE_NAME> --stop
-    ```
-*   **Restart Services:**
-    ```bash
-    sudo exportcli-manage --restart
-    sudo exportcli-manage -i <INSTANCE_NAME> --restart 
-    ```
-    *(Note: This command will display a warning that the operation may take some time if the service is slow to respond to stop signals.)*
-*   **Enable Services (to start on boot):**
-    ```bash
-    sudo exportcli-manage --enable
-    sudo exportcli-manage -i <INSTANCE_NAME> --enable
-    ```
-*   **Disable Services (to prevent start on boot):**
-    ```bash
-    sudo exportcli-manage --disable
-    sudo exportcli-manage -i <INSTANCE_NAME> --disable
-    ```
+> **Note on SELinux/AppArmor:** If using non-standard paths for `BASE_DIR_CONFIG` during installation, security contexts might need adjustment (e.g., `semanage fcontext`, `restorecon`). Default paths are generally chosen to work with standard system policies.
 
 ---
 
-## 8. Troubleshooting
+## 14. Step 11: Updating Authentication Credentials
+*(Modify credentials if required for `exportcliv2` instances.)*
 
-*   Check service status: `sudo exportcli-manage --status` or `sudo exportcli-manage -i <INSTANCE_NAME> --status`.
-*   View logs captured by systemd: `journalctl -u bitmover.service`, `journalctl -u exportcliv2@<INSTANCE_NAME>.service`.
-*   Verify configuration files in `/etc/exportcliv2/`.
+1.  Edit the common authentication file: `/etc/exportcliv2/common.auth.conf`:
+    ```bash
+    vi /etc/exportcliv2/common.auth.conf
+    ```
+2.  Update `EXPORT_AUTH_TOKEN_U` (username) and `EXPORT_AUTH_TOKEN_P` (password).
+3.  Save and exit.
+4.  **Restart all `exportcliv2` instances:**
+    ```bash
+    exportcli-manage -i AAA --restart # And for any other instances.
+    ```
 
-For more detailed troubleshooting, or if applications write their own log/status files not captured by `journalctl`:
+---
+## 15. Troubleshooting
+*(Basic steps to diagnose issues.)*
 
-*   **Bitmover Logs:** Check the directory specified during installation (default: `/var/log/exportcliv2/bitmover/`, or as set by `BITMOVER_LOG_DIR_CONFIG` in `install-app.conf`). The `config.ini` for Bitmover (at `/etc/exportcliv2/config.ini`) will also reference its configured log path.
-*   **exportcliv2 Instance Files:** The `exportcliv2@<INSTANCE_NAME>.service` instances use `/var/log/exportcliv2/<INSTANCE_NAME>/` as their working directory and for logs managed by systemd's `LogsDirectory=` feature. This directory is automatically created by systemd. Any files generated directly by an instance (e.g., temporary files, specific status files, or direct log files not sent to standard output/error which would be captured by journald) would be found here.
+1.  **Check Service Status:**
+    *   Bitmover service: `exportcli-manage --status`
+    *   `exportcliv2` instance: `exportcli-manage -i <INSTANCE_NAME> --status`
+2.  **Review Logs:**
+    *   Use `exportcli-manage --logs [-follow]` or `exportcli-manage -i <INSTANCE_NAME> --logs [-follow]`.
+    *   Check system journal: `journalctl -u bitmover.service` or `journalctl -u exportcliv2@<INSTANCE_NAME>.service`.
+    *   Check application file logs in `/var/log/exportcliv2/`.
+3.  **Verify Configuration:**
+    *   System-wide defaults: `/etc/default/exportcliv2_base_vars`.
+    *   Bitmover config: `/etc/exportcliv2/config.ini`.
+    *   Instance environment: `/etc/exportcliv2/<INSTANCE_NAME>.conf`.
+    *   Instance application config: `/etc/exportcliv2/<INSTANCE_NAME>_app.conf`.
+    *   Shared authentication: `/etc/exportcliv2/common.auth.conf`.
+4.  **Permissions:** Ensure file and directory permissions and ownerships are correct, especially in `/etc/exportcliv2/`, `/var/log/exportcliv2/`, and your base application directory (e.g. `/var/tmp/testme/`).
+5.  **Path Issues:** Ensure `exportcli-manage` is in the system `PATH` (`ls -l /usr/local/bin/exportcli-manage`).
 
 ---
 
-## 9. Appendix A: Key Configuration and Template File Details
+## 16. Appendix A: Key Configuration and Template File Details
+*(Details about important configuration files and templates used by the suite.)*
 
-### A.1 `install-app.conf` (Primary Input Configuration)
+The installation process uses several configuration files and templates. The `install_base_exportcliv2.sh` script processes templates by replacing placeholders (like `{{APP_NAME}}`, `{{APP_USER}}`, `{{ETC_DIR}}`, etc.) with actual values derived during installation (many from `/etc/default/exportcliv2_base_vars` or `install-app.conf`).
 
-(Located in `exportcliv2-suite-vX.Y.Z/exportcliv2-deploy/`. Sourced by `deploy_orchestrator.sh` and drives `install_base_exportcliv2.sh`)
+### A.1 `install-app.conf` (Bundle's Primary Input Configuration)
+*(Located in `exportcliv2-suite-vX.Y.Z/exportcliv2-deploy/`. This file drives the `deploy_orchestrator.sh` and subsequently the `install_base_exportcliv2.sh` scripts for initial setup or updates.)*
 
 ```ini
-# install-app.conf - Example v2
+# install-app.conf (Example from your testing)
 
-# MANDATORY for default installs: Space-separated list of instance names.
-# Used by 'deploy_orchestrator.sh --install' if the -i flag is not provided.
-DEFAULT_INSTANCES_CONFIG="ABC DEF GHI"
+# Space-separated list of instance names.
+# MANDATORY for default installs via 'deploy_orchestrator.sh --install'.
+DEFAULT_INSTANCES_CONFIG="AAA"
 
-# MANDATORY: Filename of the main application binary.
+# The filename of the VERSIONED main application binary within this bundle.
+# MANDATORY. Must exist in ./exportcliv2-deploy/
 VERSIONED_APP_BINARY_FILENAME="exportcliv2-v0.4.0-B1771-24.11.15"
 
-# MANDATORY: Filename of the DataMover Python wheel.
-VERSIONED_DATAMOVER_WHEEL_FILENAME="datamover-0.1.0-py3-none-any.whl"
+# The filename of the VERSIONED DataMover Python wheel within this bundle.
+# MANDATORY. Must exist in ./exportcliv2-deploy/
+VERSIONED_DATAMOVER_WHEEL_FILENAME="datamover-0.1.2-py3-none-any.whl"
 
-# MANDATORY: Remote URL for Bitmover uploads.
+# The remote URL for the Bitmover component to upload data to.
+# MANDATORY. Must start with http:// or https://
 REMOTE_HOST_URL_CONFIG="http://192.168.0.180:8989/pcap"
 
-# MANDATORY: Default timeout for exportcliv2 instances.
+# Timeout (-t) in seconds for exportcliv2 instances.
+# MANDATORY. This value is stored in /etc/default/exportcliv2_base_vars
+# for configure_instance.sh to use as a default.
 EXPORT_TIMEOUT_CONFIG="15"
 
-# --- Optional Overrides ---
-# USER_CONFIG: Service user name. Default: "exportcliv2_user"
-# USER_CONFIG="exportcliv2_user"
+# --- Optional Overrides for System Setup ---
+# The user name for the service. Default used by installer if not set: "exportcliv2_user"
+USER_CONFIG="exportcliv2_user"
 
-# GROUP_CONFIG: Service group name. Default: "exportcliv2_group"
-# GROUP_CONFIG="datapipeline_group" # Example from your tests
+# The group name for the service. Default used by installer if not set: "exportcliv2_group"
+GROUP_CONFIG="datapipeline_group"
 
-# BASE_DIR_CONFIG: Base installation directory. Default: "/opt/exportcliv2"
-# BASE_DIR_CONFIG="/var/tmp/testme" # Example from your tests
+# BASE_DIR_CONFIG: Overrides the default base installation directory.
+# Installer default: "/opt/exportcliv2"
+BASE_DIR_CONFIG="/var/tmp/testme"
 
-# PYTHON_VENV_DIR_NAME: Name of the Python virtual environment directory for Bitmover.
-# Default: "datamover_venv" (created directly under the effective BASE_DIR, e.g., /opt/exportcliv2/datamover_venv)
-# PYTHON_VENV_DIR_NAME="my_bitmover_env"
+# WHEELHOUSE_SUBDIR: Subdirectory within the bundle containing dependency wheels
+# for offline Python package installation. Default: "wheelhouse"
+WHEELHOUSE_SUBDIR="wheelhouse"
 
-# BITMOVER_LOG_DIR_CONFIG: Overrides the default log directory for Bitmover.
-# The base log directory /var/log/exportcliv2/ is created by the installer.
-# This variable should be an absolute path if you wish to place Bitmover's logs
-# outside the default /var/log/exportcliv2/bitmover/ location.
-# Default: "/var/log/exportcliv2/bitmover"
-# Example (custom absolute path): BITMOVER_LOG_DIR_CONFIG="/var/log/my_app/custom_bitmover_logs"
-# Example (custom path under main app log dir): BITMOVER_LOG_DIR_CONFIG="/var/log/exportcliv2/bitmover_variant_logs"
+# LOG_DIR_CONFIG: Base directory for application logs.
+# Installer default: "/var/log/exportcliv2/"
+LOG_DIR_CONFIG="/var/log/exportcliv2/"
 
-# --- Advanced Optional Overrides (rarely changed) ---
-# SYSTEMD_TEMPLATES_SUBDIR: Subdirectory within the deployment package containing systemd unit templates.
-# Default: "systemd_units"
-# SYSTEMD_TEMPLATES_SUBDIR="my_custom_systemd_units"
-
-# COMMON_CONFIGS_SUBDIR: Subdirectory within the deployment package containing common config file templates.
-# Default: "config_files"
-# COMMON_CONFIGS_SUBDIR="my_common_configs"
-
-# Note: Other path configurations (like where binaries are installed, or the main application config directory /etc/exportcliv2)
-# are derived from BASE_DIR_CONFIG or are hardcoded conventions in the installer (e.g., /etc/exportcliv2).
-# The main application log directory /var/log/exportcliv2 is also a fixed convention of the installer.
 ```
+**Key Points:**
+*   `DEFAULT_INSTANCES_CONFIG` drives which instances are set up by `deploy_orchestrator.sh --install` if not overridden.
+*   `VERSIONED_APP_BINARY_FILENAME` and `VERSIONED_DATAMOVER_WHEEL_FILENAME` must match files present in the `exportcliv2-deploy/` directory of the bundle.
+*   `REMOTE_HOST_URL_CONFIG` and `EXPORT_TIMEOUT_CONFIG` are critical operational settings.
+*   Other `*_CONFIG` variables provide system-level defaults for the installation.
 
-**Key takeaway**: `DEFAULT_INSTANCES_CONFIG` is now a key orchestrator input. `VERSIONED_*_FILENAME` variables must match files in `exportcliv2-deploy/`. `REMOTE_HOST_URL_CONFIG` and `EXPORT_TIMEOUT_CONFIG` are crucial functional settings that get propagated during initial setup. `BITMOVER_LOG_DIR_CONFIG` allows customization of Bitmover's log location using an absolute path.
+---
 
-### A.2 `run_exportcliv2_instance.sh.template`
+### A.2 `run_exportcliv2_instance.sh.template` (Instance Wrapper Script)
+*(Template located in `exportcliv2-deploy/config_files/`. `install_base_exportcliv2.sh` processes this template and installs it as `run_exportcliv2_instance.sh` in the application's `bin` directory, e.g., `/var/tmp/testme/bin/run_exportcliv2_instance.sh`.)*
 
-(Content largely the same - explains the wrapper script that sources `<INSTANCE_NAME>.conf` and launches `exportcliv2`.)
+This script is executed by the `exportcliv2@.service` systemd unit for each instance.
+```bash
+#!/bin/bash
+# Shellcheck directives from your template included
+set -euo pipefail
 
-### A.3 `common.auth.conf`
+# Wrapper script for {{APP_NAME}} instance: $1 (passed by systemd as %i)
+# Executed as {{APP_USER}}
 
-(Content largely the same - explains the optional shared authentication file.)
+# --- Instance Name from Argument ---
+if [[ -z "$1" ]]; then
+  echo "Error: Instance name argument (%i) not provided to wrapper script." >&2
+  exit 78 # EX_CONFIG
+fi
+INSTANCE_NAME="$1"
 
-### A.4 `config.ini.template` (Bitmover Configuration)
+# --- Log script start (optional but helpful) ---
+echo "Wrapper script for {{APP_NAME}}@${INSTANCE_NAME} starting..."
 
-(Template for `/etc/exportcliv2/config.ini` (by default). `REMOTE_HOST_URL_CONFIG` from `install-app.conf` and the configured Bitmover log path (from `BITMOVER_LOG_DIR_CONFIG` in `install-app.conf`) populate this template during installation.)
+# --- Sanity check required environment variables ---
+# These are expected to be set by systemd via EnvironmentFile directives
+# (e.g., from {{ETC_DIR}}/common.auth.conf and {{ETC_DIR}}/${INSTANCE_NAME}.conf)
+required_vars=(
+  "EXPORT_AUTH_TOKEN_U"
+  "EXPORT_AUTH_TOKEN_P"
+  "EXPORT_TIMEOUT"
+  "EXPORT_SOURCE" # Used to build -o path
+  "EXPORT_IP"
+  "EXPORT_PORTID"
+  "EXPORT_APP_CONFIG_FILE_PATH"
+  "EXPORT_STARTTIME_OFFSET_SPEC"
+  # "EXPORT_ENDTIME" is also used but typically defaults to -1 if not explicitly set
+)
+for var_name in "${required_vars[@]}"; do
+  if [[ -z "${!var_name:-}" ]]; then # Indirect expansion
+    echo "Error: {{APP_NAME}}@${INSTANCE_NAME}: Required environment variable '${var_name}' is not set. Check {{ETC_DIR}}/common.auth.conf and {{ETC_DIR}}/${INSTANCE_NAME}.conf." >&2
+    exit 78 # EX_CONFIG
+  fi
+done
+
+# --- Calculate dynamic start time ---
+# Uses EXPORT_STARTTIME_OFFSET_SPEC from the environment
+calculated_start_time=$(date +%s%3N --date="${EXPORT_STARTTIME_OFFSET_SPEC}" 2>/dev/null)
+
+if [[ -z "$calculated_start_time" ]]; then
+  echo "Error: {{APP_NAME}}@${INSTANCE_NAME}: Could not calculate start_time using EXPORT_STARTTIME_OFFSET_SPEC ('${EXPORT_STARTTIME_OFFSET_SPEC}'). Check this variable in {{ETC_DIR}}/${INSTANCE_NAME}.conf and ensure 'date' command works." >&2
+  exit 78 # EX_CONFIG
+fi
+
+# --- Check if the app-specific config file actually exists ---
+if [[ ! -f "${EXPORT_APP_CONFIG_FILE_PATH}" ]]; then
+    echo "Error: {{APP_NAME}}@${INSTANCE_NAME}: Application specific config file specified by EXPORT_APP_CONFIG_FILE_PATH ('${EXPORT_APP_CONFIG_FILE_PATH}') does not exist." >&2
+    exit 78 # EX_CONFIG
+fi
+
+# --- Construct paths for arguments ---
+# {{CSV_DATA_DIR}} and {{SOURCE_DATA_DIR}} are replaced with actual paths during template processing.
+CSV_INSTANCE_DIR="{{CSV_DATA_DIR}}"
+SOURCE_INSTANCE_PATH="{{SOURCE_DATA_DIR}}/${EXPORT_SOURCE}" # EXPORT_SOURCE usually matches INSTANCE_NAME
+
+# --- Log execution details (optional, can be verbose) ---
+# This section is commented out in the actual template for brevity in logs,
+# but shown here for understanding.
+# printf "Executing for %s: %s \\\n" "${INSTANCE_NAME}" "{{SYMLINK_EXECUTABLE_PATH}}"
+# printf "  -c %s \\\n" "${EXPORT_APP_CONFIG_FILE_PATH}"
+# ... and so on for other arguments, masking credentials ...
+
+# --- Execute the main application binary ---
+# {{SYMLINK_EXECUTABLE_PATH}} is replaced with the actual path to the active binary symlink.
+# EXPORT_ENDTIME is used directly if set in the environment, otherwise defaults to -1.
+exec "{{SYMLINK_EXECUTABLE_PATH}}" \
+  -c "${EXPORT_APP_CONFIG_FILE_PATH}" \
+  -u "${EXPORT_AUTH_TOKEN_U}" \
+  -p "${EXPORT_AUTH_TOKEN_P}" \
+  -C \
+  -t "${EXPORT_TIMEOUT}" \
+  -H "${CSV_INSTANCE_DIR}" \
+  -o "${SOURCE_INSTANCE_PATH}" \
+  "${EXPORT_IP}" \
+  "${EXPORT_PORTID}" \
+  "${calculated_start_time}" \
+  "${EXPORT_ENDTIME:--1}" # Use EXPORT_ENDTIME if set, otherwise default to -1
+
+exit $? # Should not be reached if exec succeeds
+```
+**Key Points:**
+*   Receives instance name (`%i`) from systemd.
+*   Sources instance-specific environment variables from `/etc/exportcliv2/<INSTANCE_NAME>.conf` and shared credentials from `/etc/exportcliv2/common.auth.conf` (via `EnvironmentFile` in the systemd unit).
+*   Dynamically calculates `start_time` based on `EXPORT_STARTTIME_OFFSET_SPEC`.
+*   Constructs and `exec`s the command to run the actual `exportcliv2` binary.
+*   Placeholders like `{{APP_NAME}}`, `{{ETC_DIR}}`, `{{CSV_DATA_DIR}}`, `{{SOURCE_DATA_DIR}}`, `{{SYMLINK_EXECUTABLE_PATH}}` are replaced by `install_base_exportcliv2.sh` during deployment.
+
+---
+
+### A.3 `/etc/exportcliv2/common.auth.conf` (Shared Authentication)
+*(This file is deployed by `install_base_exportcliv2.sh` from the `config_files/common.auth.conf` template in the bundle. It is located on the live system at `/etc/exportcliv2/common.auth.conf` by default.)*
+
+Used to store shared credentials sourced by `run_exportcliv2_instance.sh` for each instance.
+```ini
+# Common authentication tokens
+# These values will be used by all exportcliv2 instances.
+# Ensure this file has restricted permissions (e.g., 0640, root:your_app_group).
+EXPORT_AUTH_TOKEN_U="<DEFAULT_SHARED_USER>"
+EXPORT_AUTH_TOKEN_P="<DEFAULT_SHARED_PASSWORD_OR_TOKEN>"
+```
+**Key Points:**
+*   Edit this file on the system to set actual credentials.
+*   Permissions should be restrictive (e.g., `0640`, owner `root`, group `datapipeline_group`).
+
+---
+
+### A.4 `/etc/exportcliv2/config.ini` (Bitmover Service Configuration)
+*(This file is deployed by `install_base_exportcliv2.sh` from the `config_files/config.ini.template` in the bundle. It is located on the live system at `/etc/exportcliv2/config.ini` by default.)*
+
+This INI file configures the Bitmover service.
+```ini
+# Example content generated from config.ini.template
+[main]
+# Directories are typically populated by install_base_exportcliv2.sh
+# based on BASE_DIR_CONFIG from install-app.conf
+source_dir = {{SOURCE_DATA_DIR}}
+csv_dir = {{CSV_DATA_DIR}}
+worker_dir = {{WORKER_DATA_DIR}}
+uploaded_dir = {{UPLOADED_DATA_DIR}}
+dead_letter_dir = {{DEAD_LETTER_DATA_DIR}}
+log_file_path = {{BITMOVER_LOG_DIR}}/app.log.jsonl
+audit_log_path = {{BITMOVER_LOG_DIR}}/audit.log.jsonl
+
+[uploader]
+remote_host_url = {{REMOTE_HOST_URL}} # Populated from REMOTE_HOST_URL_CONFIG
+# ... other uploader specific settings ...
+
+[scanner]
+# ... scanner specific settings ...
+```
+**Key Points:**
+*   Placeholders like `{{SOURCE_DATA_DIR}}`, `{{REMOTE_HOST_URL}}`, `{{BITMOVER_LOG_DIR}}` are replaced by `install_base_exportcliv2.sh` with actual paths and values from `install-app.conf` and derived settings.
+
+---
 
 ### A.5 Systemd Unit Templates Overview
+*(Templates are located in `exportcliv2-deploy/systemd_units/`. `install_base_exportcliv2.sh` processes them and installs the resulting unit files into `/etc/systemd/system/`.)*
 
-Describes `bitmover.service.template`, `exportcliv2@.service.template`, and the restart path/service templates.
+Placeholders like `{{APP_NAME}}`, `{{APP_USER}}`, `{{APP_GROUP}}`, `{{PYTHON_VENV_PATH}}`, `{{BITMOVER_CONFIG_FILE}}`, `{{ETC_DIR}}`, `{{CSV_DATA_DIR}}`, `{{INSTALLED_WRAPPER_SCRIPT_PATH}}` are replaced with actual values during template processing.
 
-*   **`exportcliv2@.service.template` specific notes:**
-    *   This template uses the systemd directive `LogsDirectory=exportcliv2/%i`. This instructs systemd to automatically create a unique directory for each instance (e.g., `/var/log/exportcliv2/ABC/`) before the service starts.
-    *   This directory is owned by the service user (`{{APP_USER}}`) and group (`{{APP_GROUP}}`) with permissions suitable for logging (e.g., 0750).
-    *   The `WorkingDirectory` for each `exportcliv2` instance is also set to this systemd-managed path (e.g., `/var/log/exportcliv2/ABC/`). This means any relative file paths used by the `exportcliv2` application instance will resolve within its dedicated log/working directory.
+1.  **`bitmover.service.template`:**
+    *   Manages the main Bitmover upload service.
+    *   Runs as `{{APP_USER}}`:`{{APP_GROUP}}`.
+    *   Executes `{{PYTHON_VENV_PATH}}/bin/bitmover --config {{BITMOVER_CONFIG_FILE}}`.
+    *   Includes `ExecStartPre` checks for directory existence and writability.
+    *   Configured for auto-restart on failure (excluding config/usage errors).
+    ```systemd
+    [Unit]
+    Description=Bitmover - PCAP Upload Service for {{APP_NAME}}
+    After=network-online.target
+    Wants=network-online.target
+    StartLimitIntervalSec=300
+    StartLimitBurst=5
+
+    [Service]
+    Type=simple
+    User={{APP_USER}}
+    Group={{APP_GROUP}}
+    UMask=0027
+    ExecStart={{PYTHON_VENV_PATH}}/bin/bitmover --config {{BITMOVER_CONFIG_FILE}}
+    ExecStartPre=/usr/bin/test -d {{SOURCE_DATA_DIR}} -a -w {{SOURCE_DATA_DIR}}
+    ExecStartPre=/usr/bin/test -d {{CSV_DATA_DIR}} -a -w {{CSV_DATA_DIR}}
+    # ... other ExecStartPre checks from your template ...
+    ExecStartPre=/usr/bin/test -d {{BITMOVER_LOG_DIR}} -a -w {{BITMOVER_LOG_DIR}}
+    Environment="PYTHONUNBUFFERED=1"
+    Restart=on-failure
+    RestartSec=10s
+    RestartPreventExitStatus=64 78 # EX_USAGE, EX_CONFIG
+    StandardOutput=journal
+    StandardError=journal
+    SyslogIdentifier=bitmover
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+
+2.  **`exportcliv2@.service.template`:**
+    *   A systemd template unit for running individual `exportcliv2` instances (e.g., `exportcliv2@AAA.service`).
+    *   Runs as `{{APP_USER}}`:`{{APP_GROUP}}`.
+    *   Uses `EnvironmentFile` to load `/etc/exportcliv2/common.auth.conf` and `/etc/exportcliv2/%i.conf`.
+    *   Executes `{{INSTALLED_WRAPPER_SCRIPT_PATH}} %i` (which is the processed `run_exportcliv2_instance.sh`).
+    *   Uses `LogsDirectory={{APP_NAME}}/%i` (e.g., `/var/log/exportcliv2/AAA`) for systemd to manage a per-instance log/working directory.
+    *   `WorkingDirectory` is set to this `LogsDirectory`.
+    ```systemd
+    [Unit]
+    Description={{APP_NAME}} instance %I
+    After=network-online.target
+    Wants=network-online.target
+    StartLimitIntervalSec=300
+    StartLimitBurst=5
+
+    [Service]
+    User={{APP_USER}}
+    Group={{APP_GROUP}}
+    UMask=0027
+    LogsDirectory={{APP_NAME}}/%i
+    LogsDirectoryMode=0750
+    WorkingDirectory=/var/log/{{APP_NAME}}/%i
+    ExecStartPre=-/usr/bin/rm -f {{CSV_DATA_DIR}}/%i.restart
+    ExecStartPre=/usr/bin/test -d {{SOURCE_DATA_DIR}} -a -w {{SOURCE_DATA_DIR}}
+    ExecStartPre=/usr/bin/test -d {{CSV_DATA_DIR}} -a -w {{CSV_DATA_DIR}}
+    EnvironmentFile={{ETC_DIR}}/common.auth.conf
+    EnvironmentFile={{ETC_DIR}}/%i.conf
+    ExecStart={{INSTALLED_WRAPPER_SCRIPT_PATH}} %i
+    StandardOutput=journal
+    StandardError=journal
+    SyslogIdentifier={{APP_NAME}}@%i
+    Restart=on-failure
+    RestartSec=5s
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+
+3.  **`exportcliv2-restart@.path.template`:**
+    *   A path unit that monitors for the existence of a trigger file (e.g., `/var/tmp/testme/csv/AAA.restart`).
+    *   If the file appears, it activates `exportcliv2-restart@%i.service`.
+    ```systemd
+    [Unit]
+    Description=Path watcher to trigger restart for {{APP_NAME}} instance %I
+
+    [Path]
+    PathExists={{CSV_DATA_DIR}}/%i.restart
+    Unit={{APP_NAME}}-restart@%i.service
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+
+4.  **`exportcliv2-restart@.service.template`:**
+    *   A one-shot service triggered by the `.path` unit.
+    *   Restarts the corresponding `exportcliv2@%i.service`.
+    *   Deletes the trigger file after attempting the restart.
+    ```systemd
+    [Unit]
+    Description=Oneshot service to restart {{APP_NAME}} instance %I
+    Wants={{APP_NAME}}@%i.service
+    After={{APP_NAME}}@%i.service
+
+    [Service]
+    Type=oneshot
+    RemainAfterExit=no
+    User=root # Needs root to restart another systemd service
+    ExecStartPre=/bin/echo "Restart triggered for {{APP_NAME}}@%i.service by presence of {{CSV_DATA_DIR}}/%i.restart"
+    ExecStart=/usr/bin/systemctl restart {{APP_NAME}}@%i.service
+    ExecStartPost=-/usr/bin/rm -f {{CSV_DATA_DIR}}/%i.restart
+    StandardOutput=journal
+    StandardError=journal
+    SyslogIdentifier={{APP_NAME}}-restart@%i
+    ```
