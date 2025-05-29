@@ -4,8 +4,9 @@ import json
 import logging
 import logging.config
 import sys
+import traceback  # For the optional suggestion in setup_logging
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Dict, Optional, Union, Tuple, Type  # For type hints
 
 # A set of built-in LogRecord attributes.
 LOG_RECORD_BUILTIN_ATTRS = {
@@ -34,6 +35,25 @@ LOG_RECORD_BUILTIN_ATTRS = {
     "taskName",
 }
 
+# Logger default configurations
+DEFAULT_LOG_FILENAME = "app.log.jsonl"
+DEFAULT_AUDIT_LOG_FILENAME = "audit.log.jsonl"
+
+DEBUG_LOG_MAX_BYTES = 10 * 1024 * 1024
+DEBUG_LOG_BACKUP_COUNT = 5
+
+AUDIT_LOG_MAX_BYTES = 50 * 1024 * 1024
+AUDIT_LOG_BACKUP_COUNT = 20
+
+
+# --- JSONFormatter and its helpers ---
+
+# Simplified type alias for exc_info tuple
+ExcInfoTupleType = Tuple[Type[BaseException], BaseException, Any]  # Standard sys.exc_info() tuple
+ExcInfoNormalizedType = Optional[ExcInfoTupleType]
+
+# A clear alias for the one shape we accept
+NormalizedExcInfo = Tuple[Type[BaseException], BaseException, Any]
 
 def _generate_utc_iso_timestamp(record: logging.LogRecord) -> str:
     """Generates an ISO 8601 formatted timestamp in UTC."""
@@ -43,77 +63,148 @@ def _generate_utc_iso_timestamp(record: logging.LogRecord) -> str:
         return iso[:-6] + "Z"
     return iso
 
+def _normalize_exc_info(record: logging.LogRecord) -> Optional[NormalizedExcInfo]:
+    """
+    Normalize a LogRecord’s exc_info into a consistent 3-tuple or None.
+
+    Many parts of the logging API allow `record.exc_info` to come in different forms:
+      - `None` or `False` ⇒ no exception
+      - `True` ⇒ “include the current exception” (from sys.exc_info())
+      - a 3-tuple (exc_type, exc_value, traceback)
+      - an actual Exception instance
+
+    This helper coalesces all valid inputs into exactly one shape:
+      (`exc_type: Type[BaseException]`, `exc_value: BaseException`, `tb: Any`)
+    or `None` if no usable exception data was found.
+
+    By performing:
+      1. Early exits on falsy inputs
+      2. A special case for `True` via `sys.exc_info()`
+      3. Wrapping a lone Exception instance into a 3-tuple
+      4. A runtime check that it's a length-3 tuple
+      5. Destructuring (avoiding raw `raw[0]` indexing on an unknown type)
+      6. A final guard that the first element is really a subclass of BaseException
+
+    We both:
+      - Guarantee a single, statically typed return shape for downstream code, and
+      - Satisfy type-checkers (mypy/pyright) so they no longer warn about indexing
+        arbitrary `Any` values.
+
+    Returns:
+        A tuple (exc_type: Type[BaseException], exc_value: BaseException, tb: Any)
+        if valid exception info is present; otherwise None.
+    """
+    raw = record.exc_info
+
+    # 1) Early bail on “nothing here”
+    if not raw:
+        return None
+
+    # 2) If they passed True, grab the current exception
+    if raw is True:
+        raw = sys.exc_info()
+
+    # 3) If they passed an exception instance, wrap it
+    elif isinstance(raw, BaseException):
+        raw = (type(raw), raw, raw.__traceback__)
+
+    # 4) If it still isn’t a 3-tuple, give up
+    if not (isinstance(raw, tuple) and len(raw) == 3):
+        return None
+
+    # At this point mypy/pyright knows `raw: Tuple[Any, Any, Any]`.
+    # Now destructure—no more [0] indexing on a fuzzy type:
+    cls, val, tb = raw
+
+    # 5) Finally, check the first element is really an exception *type*
+    if not (isinstance(cls, type) and issubclass(cls, BaseException)):
+        return None
+
+    # Now `cls,val,tb` is exactly our NormalizedExcInfo
+    return cls, val, tb
+
 
 class JSONFormatter(logging.Formatter):
-    """Custom Formatter for JSON output."""
+    """
+    Custom Formatter for JSON output.
+    Incorporates QA suggestions for simplification, type safety, and maintainability.
+    """
+    DEFAULT_FMT_KEYS: Dict[str, str] = {
+        "timestamp": "asctime",
+        "level": "levelname",
+        "message": "message",
+        "logger": "name",
+        "module": "module",  # Retained 'module' as a useful default. Can be removed if too verbose.
+        "function": "funcName",
+        "line": "lineno",
+    }
+    DEFAULT_EXCEPTION_KEY: str = "exception"
+    DEFAULT_STACK_INFO_KEY: str = "stack_info"
 
     def __init__(
-        self, fmt_keys: Optional[dict[str, str]] = None, datefmt: Optional[str] = None
+            self, fmt_keys: Optional[Dict[str, str]] = None, datefmt: Optional[str] = None
     ):
         super().__init__(datefmt=datefmt)
-        self.fmt_keys = fmt_keys.copy() if fmt_keys else {}
+        self.user_fmt_keys: Optional[Dict[str, str]] = fmt_keys.copy() if fmt_keys is not None else None
 
-    def _prepare_log_dict(self, record: logging.LogRecord) -> dict[str, Any]:
-        data: dict[str, Any] = {}
-        log_message = record.getMessage()
-        actual_exc_info = record.exc_info
-        if actual_exc_info is True:  # pragma: no cover
-            actual_exc_info = sys.exc_info()
+    def _prepare_log_dict(self, record: logging.LogRecord) -> Dict[str, Any]:
+        data: Dict[str, Any] = {}
+        log_message: str = record.getMessage()
 
-        fmt_keys_values = self.fmt_keys.values()
-        should_format_exc_info_by_default = (
-            actual_exc_info
-            and actual_exc_info[0] is not None
-            and "exc_info" not in fmt_keys_values
-        )
-        should_format_stack_info_by_default = (
-            record.stack_info is not None and "stack_info" not in fmt_keys_values
-        )
+        normalized_exc_info = _normalize_exc_info(record)
 
-        if self.fmt_keys:
-            for key, record_attr_name in self.fmt_keys.items():
-                if record_attr_name == "asctime":
-                    data[key] = _generate_utc_iso_timestamp(record)
-                elif record_attr_name == "message":
-                    data[key] = log_message
-                elif record_attr_name == "exc_info":
-                    if actual_exc_info and actual_exc_info[0] is not None:
-                        data[key] = self.formatException(actual_exc_info)
-                elif record_attr_name == "stack_info":
-                    if record.stack_info is not None:
-                        data[key] = self.formatStack(record.stack_info)
-                elif hasattr(record, record_attr_name):
-                    val = getattr(record, record_attr_name)
-                    if not callable(val):
-                        data[key] = val
-        else:
-            data = {
-                "timestamp": _generate_utc_iso_timestamp(record),
-                "level": record.levelname,
-                "message": log_message,
-                "logger": record.name,
-                "module": record.module,
-                "funcName": record.funcName,
-                "lineno": record.lineno,
-            }
+        # Determine effective format keys: user-supplied or default
+        effective_fmt_keys = self.user_fmt_keys if self.user_fmt_keys is not None else self.DEFAULT_FMT_KEYS
 
-        if "message" not in data and "message" not in fmt_keys_values:
-            data["message"] = log_message
-        if should_format_exc_info_by_default and "exception" not in data:
-            data["exception"] = self.formatException(actual_exc_info)  # type: ignore[arg-type]
-        if should_format_stack_info_by_default and "stack_info" not in data:
-            assert record.stack_info is not None
-            data["stack_info"] = self.formatStack(record.stack_info)
+        # Set of LogRecord attribute names that have been explicitly mapped by effective_fmt_keys.
+        # This helps avoid double-processing by the "extras" collection step.
+        # Also include standard 'exc_info' and 'stack_info' if they will be handled separately.
+        processed_record_attributes: set[str] = set(effective_fmt_keys.values())
+        if normalized_exc_info:
+            processed_record_attributes.add("exc_info")
+        if record.stack_info:
+            processed_record_attributes.add("stack_info")
 
-        current_keys_in_data = set(data.keys())
-        for record_attr_name, record_attr_value in record.__dict__.items():
-            if (
-                record_attr_name not in LOG_RECORD_BUILTIN_ATTRS
-                and record_attr_name not in fmt_keys_values
-                and record_attr_name not in current_keys_in_data
-            ):
-                if not callable(record_attr_value):
-                    data[record_attr_name] = record_attr_value
+        # Populate data using a dictionary comprehension for mapped fields
+        for output_key, record_attr_name in effective_fmt_keys.items():
+            if record_attr_name == "asctime":
+                data[output_key] = _generate_utc_iso_timestamp(record)
+            elif record_attr_name == "message":
+                data[output_key] = log_message
+            # Explicit 'exc_info' or 'stack_info' in fmt_keys are handled here.
+            # If they are NOT in fmt_keys, they'll be handled by the default attachment below.
+            elif record_attr_name == "exc_info":
+                if normalized_exc_info:
+                    data[output_key] = self.formatException(normalized_exc_info)
+            elif record_attr_name == "stack_info":
+                if record.stack_info:
+                    data[output_key] = self.formatStack(record.stack_info)
+            elif hasattr(record, record_attr_name):
+                value = getattr(record, record_attr_name)
+                # Only add if the value is not callable (to avoid methods)
+                # and primitive enough or let json.dumps handle it with default=str
+                if not callable(value):
+                    data[output_key] = value
+
+        # Add default exception and stack information if they exist and
+        # were NOT explicitly mapped by `effective_fmt_keys`.
+        # Check if output keys for default exception/stack would collide with user-defined keys.
+        if normalized_exc_info and "exc_info" not in effective_fmt_keys.values():
+            if self.DEFAULT_EXCEPTION_KEY not in data:  # Ensure key is not already used
+                data[self.DEFAULT_EXCEPTION_KEY] = self.formatException(normalized_exc_info)
+
+        if record.stack_info and "stack_info" not in effective_fmt_keys.values():
+            if self.DEFAULT_STACK_INFO_KEY not in data:  # Ensure key is not already used
+                data[self.DEFAULT_STACK_INFO_KEY] = self.formatStack(record.stack_info)
+
+        # Collect "extra" attributes from record.__dict__
+        for attr_name, attr_value in record.__dict__.items():
+            if (attr_name not in LOG_RECORD_BUILTIN_ATTRS and
+                    attr_name not in processed_record_attributes and
+                    attr_name not in data and  # Check if output key 'attr_name' is already used
+                    not callable(attr_value)):
+                data[attr_name] = attr_value
+
         return data
 
     def format(self, record: logging.LogRecord) -> str:
@@ -121,15 +212,9 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_dict, default=str)
 
 
-class LoggingConfigurationError(Exception):
-    """Custom exception for errors during logging setup."""
+# --- End of JSONFormatter ---
 
-    pass
-
-
-DEFAULT_LOG_FILENAME = "app.log.jsonl"
-MAX_BYTES = 10 * 1024 * 1024
-BACKUP_COUNT = 5
+FORMATTER_CLASS_PATH = f"{__name__}.JSONFormatter"
 
 BASE_LOGGING_CONFIG: dict[str, Any] = {
     "version": 1,
@@ -140,16 +225,16 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
             "datefmt": "%Y-%m-%dT%H:%M:%S",
         },
         "json_file": {
-            # <-- fully‐qualified path into your installed package
-            "()": "datamover.startup_code.logger_setup.JSONFormatter",
-            "fmt_keys": {
+            "()": FORMATTER_CLASS_PATH,
+            "fmt_keys": JSONFormatter.DEFAULT_FMT_KEYS,  # Use the class default directly
+        },
+        "audit_json_file": {
+            "()": FORMATTER_CLASS_PATH,
+            "fmt_keys": {  # Audit logs often rely more on 'extra' fields
                 "timestamp": "asctime",
-                "thread_name": "threadName",
                 "level": "levelname",
                 "message": "message",
-                "logger": "name",
-                "function": "funcName",
-                "line": "lineno",
+                "logger_name": "name",  # Explicitly "logger_name" for audit
             },
         },
     },
@@ -159,8 +244,17 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
             "level": "DEBUG",
             "formatter": "json_file",
             "filename": DEFAULT_LOG_FILENAME,
-            "maxBytes": MAX_BYTES,
-            "backupCount": BACKUP_COUNT,
+            "maxBytes": DEBUG_LOG_MAX_BYTES,
+            "backupCount": DEBUG_LOG_BACKUP_COUNT,
+            "encoding": "utf8",
+        },
+        "audit_file_json": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "level": "DEBUG",
+            "formatter": "audit_json_file",
+            "filename": DEFAULT_AUDIT_LOG_FILENAME,
+            "maxBytes": AUDIT_LOG_MAX_BYTES,
+            "backupCount": AUDIT_LOG_BACKUP_COUNT,
             "encoding": "utf8",
         },
         "console": {
@@ -171,10 +265,14 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
         },
     },
     "loggers": {
-        # <-- fully‐qualified module names
         "datamover.file_functions.gather_entry_data": {"level": "INFO"},
         "datamover.file_functions.scan_directory_and_filter": {"level": "INFO"},
         "watchdog": {"level": "INFO"},
+        "datamover.upload_audit": {
+            "handlers": ["audit_file_json"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
     },
     "root": {
         "level": "DEBUG",
@@ -183,33 +281,26 @@ BASE_LOGGING_CONFIG: dict[str, Any] = {
 }
 
 
+class LoggingConfigurationError(Exception):
+    """Custom exception for errors during logging setup."""
+    pass
+
+
 def _get_level_num(level_input: Union[int, str], param_name_for_error: str) -> int:
     if isinstance(level_input, str):
         level_upper = level_input.upper()
         numeric_level = logging.getLevelName(level_upper)
-        if isinstance(numeric_level, str):
-            numeric_level = logging._nameToLevel.get(level_upper)
-        if numeric_level is None:
+        if not isinstance(numeric_level, int):
             try:
-                potential_num = int(level_upper)
-                if logging.getLevelName(potential_num).startswith("Level "):
-                    raise LoggingConfigurationError(
-                        f"Invalid numeric string for {param_name_for_error}: '{level_input}'. "
-                        f"It does not map to a standard level name (e.g., DEBUG, INFO)."
-                    )
-                numeric_level = potential_num
+                numeric_level = int(level_upper)
+                # No need for the `pass` here, the value is used directly.
             except ValueError:
                 raise LoggingConfigurationError(
                     f"Invalid level string for {param_name_for_error}: '{level_input}'. "
                     f"Must be a standard level name (e.g., 'DEBUG') or a string representing a standard level number (e.g., '10')."
                 )
-        return numeric_level  # type: ignore
+        return numeric_level
     elif isinstance(level_input, int):
-        if logging.getLevelName(level_input).startswith("Level "):
-            raise LoggingConfigurationError(
-                f"Invalid numeric level for {param_name_for_error}: {level_input}. "
-                f"It does not map to a standard level name (e.g., DEBUG, INFO)."
-            )
         return level_input
     raise TypeError(
         f"{param_name_for_error} must be an int or string, not {type(level_input)}"
@@ -217,19 +308,20 @@ def _get_level_num(level_input: Union[int, str], param_name_for_error: str) -> i
 
 
 def setup_logging(
-    *,
-    config_path: Optional[Path] = None,
-    log_file_dir: Optional[Path] = None,
-    root_level: Optional[Union[int, str]] = None,
-    console_level: Optional[Union[int, str]] = None,
-    file_level: Optional[Union[int, str]] = None,
+        *,
+        config_path: Optional[Path] = None,
+        log_file_dir: Optional[Path] = None,
+        root_level: Optional[Union[int, str]] = None,
+        console_level: Optional[Union[int, str]] = None,
+        file_level: Optional[Union[int, str]] = None,
 ) -> None:
+    # ... setup_logging logic (largely unchanged internally, but see exception handling) ...
     root_logger = logging.getLogger()
     original_root_handlers = list(root_logger.handlers)
     config_warnings: list[str] = []
 
     try:
-        cfg: dict[str, Any]
+        cfg: dict[str, Any] = {}
         if config_path:
             if not config_path.exists():
                 raise LoggingConfigurationError(f"Config file not found: {config_path}")
@@ -283,30 +375,25 @@ def setup_logging(
         if root_level is not None:
             root_target_lvl_num = _get_level_num(root_level, "root_level")
         else:
-            root_target_lvl_num = default_root_lvl_num
             root_cfg_handlers = cfg.get("root", {}).get("handlers", [])
             handler_levels_for_root_min = []
             if "console" in root_cfg_handlers and "console" in cfg.get("handlers", {}):
                 handler_levels_for_root_min.append(console_target_lvl_num)
             if "file_json" in root_cfg_handlers and "file_json" in cfg.get(
-                "handlers", {}
+                    "handlers", {}
             ):
                 handler_levels_for_root_min.append(file_target_lvl_num)
-            if handler_levels_for_root_min:
-                root_target_lvl_num = min(
-                    root_target_lvl_num, *handler_levels_for_root_min
-                )
+
+            effective_min_handler_level_for_root = min(
+                handler_levels_for_root_min) if handler_levels_for_root_min else default_root_lvl_num
+            root_target_lvl_num = min(default_root_lvl_num, effective_min_handler_level_for_root)
 
         cfg.setdefault("root", {})["level"] = logging.getLevelName(root_target_lvl_num)
-        if "console" in cfg.get(
-            "handlers", {}
-        ):  # Check if 'console' handler is defined
+        if "console" in cfg.get("handlers", {}):
             cfg["handlers"]["console"]["level"] = logging.getLevelName(
                 console_target_lvl_num
             )
-        if "file_json" in cfg.get(
-            "handlers", {}
-        ):  # Check if 'file_json' handler is defined
+        if "file_json" in cfg.get("handlers", {}):
             cfg["handlers"]["file_json"]["level"] = logging.getLevelName(
                 file_target_lvl_num
             )
@@ -323,10 +410,11 @@ def setup_logging(
             app_internal_logger.warning(warning_message)
 
         app_internal_logger.info(
-            "Logging initialized: root=%s, console=%s, file_json=%s",
-            cfg["root"]["level"],
+            "Logging initialized: root=%s, console=%s (effective), file_json=%s (effective), audit_file_json=%s (handler)",
+            logging.getLevelName(root_logger.getEffectiveLevel()),
             cfg.get("handlers", {}).get("console", {}).get("level", "N/A"),
             cfg.get("handlers", {}).get("file_json", {}).get("level", "N/A"),
+            cfg.get("handlers", {}).get("audit_file_json", {}).get("level", "N/A")
         )
 
     except LoggingConfigurationError:
@@ -334,6 +422,9 @@ def setup_logging(
     except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as err:
         raise LoggingConfigurationError(f"Failed to initialize logging: {err}") from err
     except Exception as e:
+        # For truly unexpected errors during logging setup, print to stderr and include traceback
+        sys.stderr.write(f"CRITICAL: An unexpected error occurred during logging setup: {e}\n")
+        traceback.print_exc(file=sys.stderr)  # Print stack trace to stderr
         raise LoggingConfigurationError(
             f"An unexpected error occurred during logging setup: {e}"
         ) from e
