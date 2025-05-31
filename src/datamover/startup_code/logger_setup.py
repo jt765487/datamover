@@ -201,7 +201,9 @@ class JSONFormatter(logging.Formatter):
         # were NOT explicitly mapped by `effective_fmt_keys`.
         # Check if output keys for the default exception / stack would collide with user-defined keys.
         if normalized_exc_info and "exc_info" not in effective_fmt_keys.values():
-            if self.DEFAULT_EXCEPTION_KEY not in data:  # Ensure the key is not already used
+            if (
+                self.DEFAULT_EXCEPTION_KEY not in data
+            ):  # Ensure the key is not already used
                 data[self.DEFAULT_EXCEPTION_KEY] = self.formatException(
                     normalized_exc_info
                 )
