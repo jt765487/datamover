@@ -7,6 +7,7 @@ from typing import Any
 from datamover.file_functions.move_file_safely import move_file_safely_impl
 from datamover.file_functions.scan_directory_and_filter import scan_directory_and_filter
 from datamover.mover.thread_factory import create_file_move_thread
+from datamover.purger.thread_factory import create_purger_thread
 from datamover.scanner.thread_factory import create_scan_thread
 from datamover.startup_code.context import AppContext
 from datamover.tailer.thread_factory import create_csv_tailer_thread
@@ -123,6 +124,22 @@ def _define_thread_factory_specs(
                 "http_client": context.http_client,
                 "file_scanner_impl": scan_directory_and_filter,
                 "safe_file_mover_impl": move_file_safely_impl,
+            },
+        },
+        {
+            "key": "disk_purger",  # Changed key for clarity
+            "factory": create_purger_thread,
+            "args_builder": lambda: {
+                "work_dir_path": cfg.worker_dir,
+                "uploaded_dir_path": cfg.uploaded_dir,
+                "fs": context.fs,
+                # "total_disk_capacity_bytes": cfg.purger_total_disk_capacity_bytes,
+                # "target_disk_usage_percent": cfg.purger_target_disk_usage_percent,
+                # "check_interval_seconds": cfg.purger_check_interval_seconds,
+                "total_disk_capacity_bytes": 1000,
+                "target_disk_usage_percent": 0.8,
+                "check_interval_seconds": 60.0,
+                "stop_event": context.shutdown_event,
             },
         },
     ]
