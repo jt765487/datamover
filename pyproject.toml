@@ -16,7 +16,8 @@ dependencies = [
 
 [project.scripts]
 bitmover = "datamover.bitmover:main" # Script name is 'bitmover'
-data_rx  = "datamover.data_rx:main"
+data_rx  = "datamover.data_rx:main" # Script name is 'data_rx'
+make_pcaps = "datamover.make_pcaps:main" # Script name is 'make_pcaps'
 
 [build-system]
 requires = ["hatchling"]
