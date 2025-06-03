@@ -1,14 +1,20 @@
 #!/bin/bash
 set -euo pipefail
-IFS=$'\n\t' # IFS not strictly needed at the top if not immediately used, but good practice.
+IFS=$'\n\t' # For safe looping over find results, though find -print0 is preferred.
 
-# --- Default Configuration ---
-INSTALLER_DEV_DIR="./installer"      # Source dir for installer scripts & guides
-DATAMOVER_WHEEL_DIR="./dist"         # Source dir for the datamover .whl file
-OFFLINE_WHEELS_SOURCE_DIR="./offline_package/wheels"
-PYPROJECT_TOML_PATH="./pyproject.toml"
-STAGING_DIR="_release_staging"
-PATCH_SCRIPT_NAME="install_patch.sh" # Name of the new patch script
+# Script V1.0 to create a distributable bundle for the exportcliv2 suite.
+
+# --- Default Configuration (relative to script's location if not overridden) ---
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PROJECT_ROOT_DIR="$SCRIPT_DIR" # Assuming script is in project root
+
+INSTALLER_SOURCE_DIR="${PROJECT_ROOT_DIR}/installer" # Source dir for installer scripts & USER_GUIDE.md
+README_SOURCE_FILE="${PROJECT_ROOT_DIR}/README.md"   # Source for README.md at project root
+DATAMOVER_WHEEL_SOURCE_DIR="${PROJECT_ROOT_DIR}/dist" # Source dir for the datamover .whl file
+OFFLINE_WHEELS_SOURCE_DIR_DEFAULT="${PROJECT_ROOT_DIR}/offline_package/wheels"
+PYPROJECT_TOML_PATH="${PROJECT_ROOT_DIR}/pyproject.toml"
+STAGING_DIR_NAME="_release_staging" # Name of the top-level staging directory
+PATCH_SCRIPT_NAME="install_patch.sh" # Name of the patch script within the installer source
 
 SCRIPT_NAME=$(basename "$0")
 VERBOSE_BUNDLE_SCRIPT=false
@@ -43,36 +49,50 @@ Arguments & Options:
   -r, --release-version VERSION  Optional: Explicitly set the release version for the bundle.
                                  If not set, attempts to read from '$PYPROJECT_TOML_PATH'.
   -k, --keep-staging             Optional: Do not delete the staging directory after bundling.
-  --offline-wheels-dir DIR       Optional: Override the default directory for offline Python dependency wheels.
-                                 Default: '$OFFLINE_WHEELS_SOURCE_DIR'
+  --offline-wheels-dir DIR       Optional: Override the directory for offline Python dependency wheels.
+                                 Default: '${OFFLINE_WHEELS_SOURCE_DIR_DEFAULT}'
+  --installer-src-dir DIR        Optional: Override the directory for installer scripts & USER_GUIDE.md.
+                                 Default: '${INSTALLER_SOURCE_DIR}'
+  --datamover-wheel-src-dir DIR  Optional: Override the directory containing the datamover .whl file.
+                                 Default: '${DATAMOVER_WHEEL_SOURCE_DIR}'
+  --readme-src <PATH>            Optional: Override the path to the README.md file.
+                                 Default: '${README_SOURCE_FILE}'
   --verbose-bundler              Optional: Enable verbose debug output from this bundling script.
   -h, --help                     Show this help message and exit.
 
 Requirements:
   - '--production-binary' must be specified.
   - Paths provided for binaries must exist and be executable.
-  - The datamover .whl file must exist in '$DATAMOVER_WHEEL_DIR'.
-  - Dependency wheels must exist in the offline wheels directory.
+  - The datamover .whl file must exist in the specified datamover wheel source directory.
+  - Dependency wheels should exist in the offline wheels source directory.
   - '$PYPROJECT_TOML_PATH' should exist if --release-version is not specified.
-  - Key installer scripts must exist (e.g., in '${INSTALLER_DEV_DIR}/exportcliv2-deploy/').
-  - The '${PATCH_SCRIPT_NAME}' must exist (e.g., in '${INSTALLER_DEV_DIR}/').
+  - Key installer scripts must exist (e.g., in '${INSTALLER_SOURCE_DIR}/exportcliv2-deploy/').
+  - The '${PATCH_SCRIPT_NAME}' must exist (e.g., in '${INSTALLER_SOURCE_DIR}/').
+  - The README.md file must exist at its specified source path.
 EOF
 }
 
-# --- Argument Parsing ---
+# --- Initialize Variables ---
 PRODUCTION_BINARY_PATH=""
 EMULATOR_BINARY_PATH=""
 RELEASE_VERSION=""
 KEEP_STAGING=false
+# Initialize with defaults, will be updated by options if provided
+EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR="$OFFLINE_WHEELS_SOURCE_DIR_DEFAULT"
+EFFECTIVE_INSTALLER_SOURCE_DIR="$INSTALLER_SOURCE_DIR"
+EFFECTIVE_DATAMOVER_WHEEL_SOURCE_DIR="$DATAMOVER_WHEEL_SOURCE_DIR"
+EFFECTIVE_README_SOURCE_FILE="$README_SOURCE_FILE"
 
+
+# --- Argument Parsing ---
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --production-binary)
       if [[ -z "${2:-}" ]]; then error_exit "Option $1 requires a PATH argument."; fi
-      PRODUCTION_BINARY_PATH="$2"; shift 2 ;;
+      PRODUCTION_BINARY_PATH=$(realpath "$2"); shift 2 ;; # Resolve to absolute path
     --emulator-binary)
       if [[ -z "${2:-}" ]]; then error_exit "Option $1 requires a PATH argument."; fi
-      EMULATOR_BINARY_PATH="$2"; shift 2 ;;
+      EMULATOR_BINARY_PATH=$(realpath "$2"); shift 2 ;; # Resolve to absolute path
     -r|--release-version)
       if [[ -z "${2:-}" ]]; then error_exit "Option $1 requires a VERSION argument."; fi
       RELEASE_VERSION="$2"; shift 2 ;;
@@ -80,7 +100,16 @@ while [[ $# -gt 0 ]]; do
       KEEP_STAGING=true; shift ;;
     --offline-wheels-dir)
       if [[ -z "${2:-}" ]]; then error_exit "Option $1 requires a DIRECTORY argument."; fi
-      OFFLINE_WHEELS_SOURCE_DIR="$2"; shift 2 ;;
+      EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR=$(realpath "$2"); shift 2 ;;
+    --installer-src-dir)
+      if [[ -z "${2:-}" ]]; then error_exit "Option $1 requires a DIRECTORY argument."; fi
+      EFFECTIVE_INSTALLER_SOURCE_DIR=$(realpath "$2"); shift 2 ;;
+    --datamover-wheel-src-dir)
+      if [[ -z "${2:-}" ]]; then error_exit "Option $1 requires a DIRECTORY argument."; fi
+      EFFECTIVE_DATAMOVER_WHEEL_SOURCE_DIR=$(realpath "$2"); shift 2 ;;
+    --readme-src)
+      if [[ -z "${2:-}" ]]; then error_exit "Option $1 requires a PATH argument."; fi
+      EFFECTIVE_README_SOURCE_FILE=$(realpath "$2"); shift 2 ;;
     --verbose-bundler)
       VERBOSE_BUNDLE_SCRIPT=true; shift ;;
     -h|--help)
@@ -101,7 +130,15 @@ if [[ -z "$RELEASE_VERSION" ]]; then
   if [[ ! -f "$PYPROJECT_TOML_PATH" ]]; then
     error_exit "Cannot determine version: '$PYPROJECT_TOML_PATH' not found and --release-version not specified."
   fi
-  PYPROJECT_VERSION=$(grep -E "^\s*version\s*=\s*\"[^\"]+\"" "$PYPROJECT_TOML_PATH" | sed -E 's/^\s*version\s*=\s*"([^"]+)"\s*$/\1/' | head -n 1)
+  # Using Python for more robust TOML parsing if available, otherwise fallback to grep/sed
+  if command -v python3 &> /dev/null; then
+    PYPROJECT_VERSION=$(python3 -c "import tomllib; pyproject_path='$PYPROJECT_TOML_PATH'; data=tomllib.load(open(pyproject_path, 'rb')); print(data.get('project', {}).get('version', ''))" 2>/dev/null)
+  fi
+  if [[ -z "$PYPROJECT_VERSION" ]]; then # Fallback or if python parsing failed
+    warn "Python TOML parsing failed or Python not available, falling back to grep/sed for version."
+    PYPROJECT_VERSION=$(grep -E "^\s*version\s*=\s*\"[^\"]+\"" "$PYPROJECT_TOML_PATH" | sed -E 's/^\s*version\s*=\s*"([^"]+)"\s*$/\1/' | head -n 1)
+  fi
+
   if [[ -z "$PYPROJECT_VERSION" ]]; then
     error_exit "Could not automatically determine version from '$PYPROJECT_TOML_PATH'. Use --release-version."
   fi
@@ -112,141 +149,174 @@ else
 fi
 
 # --- Derived Configuration ---
-BUNDLE_TOP_DIR="exportcliv2-suite-v${RELEASE_VERSION}"
-ARCHIVE_NAME="${BUNDLE_TOP_DIR}.tar.gz"
-WHEELHOUSE_TARGET_SUBDIR_NAME="wheelhouse"
+BUNDLE_TOP_DIR_NAME="exportcliv2-suite-v${RELEASE_VERSION}"
+ARCHIVE_NAME="${BUNDLE_TOP_DIR_NAME}.tar.gz"
+WHEELHOUSE_TARGET_SUBDIR_NAME="wheelhouse" # Name of the wheelhouse dir inside exportcliv2-deploy
+DEPLOY_SUBDIR_NAME="exportcliv2-deploy"    # Name of the main deployment scripts subdirectory
 
 # --- Setup Trap for Cleanup ---
 # shellcheck disable=SC2317
 cleanup_staging() {
-  if [[ "$KEEP_STAGING" == false && -d "$STAGING_DIR" ]]; then
-    debug_bundle "Cleaning up staging directory: $STAGING_DIR"
-    rm -rf "$STAGING_DIR"
-  elif [[ -d "$STAGING_DIR" ]]; then
-    info "Staging directory kept at: $STAGING_DIR"
+  if [[ "$KEEP_STAGING" == false && -d "${PROJECT_ROOT_DIR}/${STAGING_DIR_NAME}" ]]; then
+    debug_bundle "Cleaning up staging directory: ${PROJECT_ROOT_DIR}/${STAGING_DIR_NAME}"
+    rm -rf "${PROJECT_ROOT_DIR}/${STAGING_DIR_NAME}"
+  elif [[ -d "${PROJECT_ROOT_DIR}/${STAGING_DIR_NAME}" ]]; then
+    info "Staging directory kept at: ${PROJECT_ROOT_DIR}/${STAGING_DIR_NAME}"
   fi
 }
 trap cleanup_staging EXIT INT TERM
 
-# --- Sanity Checks and Determine Filenames ---
-info "Performing sanity checks for provided binaries..."
+# --- Sanity Checks for Paths and Files ---
+info "Performing sanity checks for inputs..."
 PRODUCTION_BINARY_FILENAME=""
 EMULATOR_BINARY_FILENAME=""
-CONFIGURED_APP_BINARY_FILENAME=""
+CONFIGURED_APP_BINARY_FILENAME="" # This will be the one set in install-app.conf
 
-if [[ -n "$PRODUCTION_BINARY_PATH" ]]; then
-  if [[ ! -f "$PRODUCTION_BINARY_PATH" ]]; then error_exit "Production binary not found at: $PRODUCTION_BINARY_PATH"; fi
-  if [[ ! -x "$PRODUCTION_BINARY_PATH" ]]; then warn "Production binary at '$PRODUCTION_BINARY_PATH' is not executable. Attempting to make it executable."; chmod +x "$PRODUCTION_BINARY_PATH" || error_exit "Failed to make production binary executable."; fi
-  PRODUCTION_BINARY_FILENAME=$(basename "$PRODUCTION_BINARY_PATH")
-  CONFIGURED_APP_BINARY_FILENAME="$PRODUCTION_BINARY_FILENAME"
-  info "Production binary (will be active): '$PRODUCTION_BINARY_FILENAME' (from $PRODUCTION_BINARY_PATH)"
+# Production Binary (Mandatory)
+if [[ ! -f "$PRODUCTION_BINARY_PATH" ]]; then error_exit "Production binary not found at: $PRODUCTION_BINARY_PATH"; fi
+if [[ ! -x "$PRODUCTION_BINARY_PATH" ]]; then
+  warn "Production binary at '$PRODUCTION_BINARY_PATH' is not executable. Attempting to make it executable."
+  chmod +x "$PRODUCTION_BINARY_PATH" || error_exit "Failed to make production binary executable."
+fi
+PRODUCTION_BINARY_FILENAME=$(basename "$PRODUCTION_BINARY_PATH")
+CONFIGURED_APP_BINARY_FILENAME="$PRODUCTION_BINARY_FILENAME" # Default active binary is production
+info "Production binary (will be active): '$PRODUCTION_BINARY_FILENAME' (from $PRODUCTION_BINARY_PATH)"
+if [[ "$PRODUCTION_BINARY_FILENAME" != *"$RELEASE_VERSION"* && "$PRODUCTION_BINARY_FILENAME" != *"${RELEASE_VERSION//./-}"* ]]; then
+    warn "Potential Version Mismatch: Production binary filename '$PRODUCTION_BINARY_FILENAME' does not appear to contain the release version '$RELEASE_VERSION'."
 fi
 
+# Emulator Binary (Optional)
 if [[ -n "$EMULATOR_BINARY_PATH" ]]; then
   if [[ ! -f "$EMULATOR_BINARY_PATH" ]]; then error_exit "Emulator binary not found at: $EMULATOR_BINARY_PATH"; fi
-  if [[ ! -x "$EMULATOR_BINARY_PATH" ]]; then warn "Emulator binary at '$EMULATOR_BINARY_PATH' is not executable. Attempting to make it executable."; chmod +x "$EMULATOR_BINARY_PATH" || error_exit "Failed to make emulator binary executable."; fi
+  if [[ ! -x "$EMULATOR_BINARY_PATH" ]]; then
+    warn "Emulator binary at '$EMULATOR_BINARY_PATH' is not executable. Attempting to make it executable."
+    chmod +x "$EMULATOR_BINARY_PATH" || error_exit "Failed to make emulator binary executable."
+  fi
   EMULATOR_BINARY_FILENAME=$(basename "$EMULATOR_BINARY_PATH")
   info "Emulator binary (for inclusion): '$EMULATOR_BINARY_FILENAME' (from $EMULATOR_BINARY_PATH)"
 fi
 
-DEPLOY_ORCHESTRATOR_SOURCE_NAME="deploy_orchestrator.sh"
-DEPLOY_ORCHESTRATOR_SOURCE="${INSTALLER_DEV_DIR}/exportcliv2-deploy/${DEPLOY_ORCHESTRATOR_SOURCE_NAME}"
+# Installer Scripts and Guides Source
+if [[ ! -d "$EFFECTIVE_INSTALLER_SOURCE_DIR" ]]; then error_exit "Installer source directory not found: $EFFECTIVE_INSTALLER_SOURCE_DIR"; fi
+if [[ ! -d "${EFFECTIVE_INSTALLER_SOURCE_DIR}/${DEPLOY_SUBDIR_NAME}" ]]; then error_exit "Subdirectory '${DEPLOY_SUBDIR_NAME}' not found in installer source: ${EFFECTIVE_INSTALLER_SOURCE_DIR}/${DEPLOY_SUBDIR_NAME}"; fi
+DEPLOY_ORCHESTRATOR_SOURCE_NAME="deploy_orchestrator.sh" # Assumed to be in DEPLOY_SUBDIR_NAME
+DEPLOY_ORCHESTRATOR_SOURCE="${EFFECTIVE_INSTALLER_SOURCE_DIR}/${DEPLOY_SUBDIR_NAME}/${DEPLOY_ORCHESTRATOR_SOURCE_NAME}"
 if [[ ! -f "$DEPLOY_ORCHESTRATOR_SOURCE" ]]; then
-  error_exit "Main installer script '${DEPLOY_ORCHESTRATOR_SOURCE_NAME}' not found at: $DEPLOY_ORCHESTRATOR_SOURCE"
+  error_exit "Main deployment script '${DEPLOY_ORCHESTRATOR_SOURCE_NAME}' not found at: $DEPLOY_ORCHESTRATOR_SOURCE"
 fi
-
-PATCH_SCRIPT_SOURCE="${INSTALLER_DEV_DIR}/${PATCH_SCRIPT_NAME}"
+PATCH_SCRIPT_SOURCE="${EFFECTIVE_INSTALLER_SOURCE_DIR}/${PATCH_SCRIPT_NAME}" # Assumed to be in INSTALLER_SOURCE_DIR root
 if [[ ! -f "$PATCH_SCRIPT_SOURCE" ]]; then
   error_exit "Patch script '${PATCH_SCRIPT_NAME}' not found at: $PATCH_SCRIPT_SOURCE"
 fi
-
-if [[ ! -d "$OFFLINE_WHEELS_SOURCE_DIR" ]]; then error_exit "Offline wheels source directory not found at: '$OFFLINE_WHEELS_SOURCE_DIR'"; fi
-if ! ls "${OFFLINE_WHEELS_SOURCE_DIR}"/*.whl &> /dev/null; then
-    warn "No .whl files found in offline wheels source directory: '$OFFLINE_WHEELS_SOURCE_DIR'. The wheelhouse in the bundle might be empty."
+if [[ ! -f "$EFFECTIVE_README_SOURCE_FILE" ]]; then error_exit "README.md not found at: $EFFECTIVE_README_SOURCE_FILE"; fi
+if [[ -f "${EFFECTIVE_INSTALLER_SOURCE_DIR}/USER_GUIDE.md" ]]; then
+  info "USER_GUIDE.md found in installer source directory."
+else
+  warn "USER_GUIDE.md not found in '${EFFECTIVE_INSTALLER_SOURCE_DIR}'. Bundle will not include it."
 fi
 
-info "Looking for the datamover wheel file in '$DATAMOVER_WHEEL_DIR'..."
-if [[ ! -d "$DATAMOVER_WHEEL_DIR" ]]; then error_exit "Datamover wheel directory '$DATAMOVER_WHEEL_DIR' not found."; fi
-datamover_wheel_file=$(find "$DATAMOVER_WHEEL_DIR" -maxdepth 1 -name "datamover*${RELEASE_VERSION}*.whl" -print -quit 2>/dev/null)
+
+# Wheels Sources
+if [[ ! -d "$EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR" ]]; then error_exit "Offline wheels source directory not found at: '$EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR'"; fi
+if ! ls "${EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR}"/*.whl &> /dev/null; then
+    warn "No .whl files found in offline wheels source directory: '$EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR'. The wheelhouse in the bundle will be empty."
+fi
+info "Looking for the datamover wheel file in '$EFFECTIVE_DATAMOVER_WHEEL_SOURCE_DIR'..."
+if [[ ! -d "$EFFECTIVE_DATAMOVER_WHEEL_SOURCE_DIR" ]]; then error_exit "Datamover wheel directory '$EFFECTIVE_DATAMOVER_WHEEL_SOURCE_DIR' not found."; fi
+
+# Use find with head for better portability than -quit
+datamover_wheel_file=$(find "$EFFECTIVE_DATAMOVER_WHEEL_SOURCE_DIR" -maxdepth 1 -type f -name "datamover*${RELEASE_VERSION}*.whl" -print | head -n 1)
 if [[ -z "$datamover_wheel_file" || ! -f "$datamover_wheel_file" ]]; then
-  warn "Could not find datamover wheel strictly matching version '$RELEASE_VERSION' in '$DATAMOVER_WHEEL_DIR'."
-  info "Falling back to find any datamover wheel file in '$DATAMOVER_WHEEL_DIR'..."
-  datamover_wheel_file=$(find "$DATAMOVER_WHEEL_DIR" -maxdepth 1 -name "datamover*.whl" -print -quit 2>/dev/null)
+  warn "Could not find datamover wheel strictly matching version '$RELEASE_VERSION' in '$EFFECTIVE_DATAMOVER_WHEEL_SOURCE_DIR'."
+  info "Falling back to find any datamover*.whl file in '$EFFECTIVE_DATAMOVER_WHEEL_SOURCE_DIR'..."
+  datamover_wheel_file=$(find "$EFFECTIVE_DATAMOVER_WHEEL_SOURCE_DIR" -maxdepth 1 -type f -name "datamover*.whl" -print | head -n 1)
 fi
-if [[ -z "$datamover_wheel_file" || ! -f "$datamover_wheel_file" ]]; then error_exit "Datamover .whl file not found in '$DATAMOVER_WHEEL_DIR'."; fi
+if [[ -z "$datamover_wheel_file" || ! -f "$datamover_wheel_file" ]]; then error_exit "Datamover .whl file not found in '$EFFECTIVE_DATAMOVER_WHEEL_SOURCE_DIR'."; fi
 DATAMOVER_WHEEL_FILENAME=$(basename "$datamover_wheel_file")
 info "Found datamover wheel: $DATAMOVER_WHEEL_FILENAME"
-if [[ "$DATAMOVER_WHEEL_FILENAME" != *"$RELEASE_VERSION"* ]]; then warn "Potential Version Mismatch: Datamover wheel filename '$DATAMOVER_WHEEL_FILENAME' does not explicitly contain '$RELEASE_VERSION'."; fi
+if [[ "$DATAMOVER_WHEEL_FILENAME" != *"$RELEASE_VERSION"* && "$DATAMOVER_WHEEL_FILENAME" != *"${RELEASE_VERSION//./-}"* ]]; then
+    warn "Potential Version Mismatch: Datamover wheel filename '$DATAMOVER_WHEEL_FILENAME' does not explicitly contain release version '$RELEASE_VERSION'."
+fi
 
 # --- Prepare Staging Area ---
-info "Starting bundle creation for ${BUNDLE_TOP_DIR}"
-STAGING_BUNDLE_ROOT="${STAGING_DIR}/${BUNDLE_TOP_DIR}"
-STAGED_DEPLOY_SUBDIR="${STAGING_BUNDLE_ROOT}/exportcliv2-deploy"
+STAGING_TOP_LEVEL_DIR="${PROJECT_ROOT_DIR}/${STAGING_DIR_NAME}"
+STAGING_BUNDLE_ROOT="${STAGING_TOP_LEVEL_DIR}/${BUNDLE_TOP_DIR_NAME}"
+STAGED_DEPLOY_SUBDIR="${STAGING_BUNDLE_ROOT}/${DEPLOY_SUBDIR_NAME}"
 STAGED_WHEELHOUSE_DIR="${STAGED_DEPLOY_SUBDIR}/${WHEELHOUSE_TARGET_SUBDIR_NAME}"
 
 info "Preparing staging directory: ${STAGING_BUNDLE_ROOT}"
-rm -rf "$STAGING_DIR"
+rm -rf "$STAGING_TOP_LEVEL_DIR" # Clean entire top-level staging dir
 mkdir -p "$STAGING_BUNDLE_ROOT"
 mkdir -p "$STAGED_DEPLOY_SUBDIR"
 mkdir -p "$STAGED_WHEELHOUSE_DIR"
 
 # --- Copy Files to Staging ---
-info "Copying '${DEPLOY_ORCHESTRATOR_SOURCE_NAME}' to bundle root..."
+info "Copying '${DEPLOY_ORCHESTRATOR_SOURCE_NAME}' to bundle root '${STAGING_BUNDLE_ROOT}'..."
 cp "$DEPLOY_ORCHESTRATOR_SOURCE" "${STAGING_BUNDLE_ROOT}/${DEPLOY_ORCHESTRATOR_SOURCE_NAME}"
 
-info "Copying '${PATCH_SCRIPT_NAME}' to bundle root..."
+info "Copying '${PATCH_SCRIPT_NAME}' to bundle root '${STAGING_BUNDLE_ROOT}'..."
 cp "$PATCH_SCRIPT_SOURCE" "${STAGING_BUNDLE_ROOT}/${PATCH_SCRIPT_NAME}"
 
-info "Copying guides to bundle root..."
-cp "${INSTALLER_DEV_DIR}/QUICK_START_GUIDE.md" "${STAGING_BUNDLE_ROOT}/"
-cp "${INSTALLER_DEV_DIR}/USER_GUIDE.md" "${STAGING_BUNDLE_ROOT}/"
+info "Copying README.md to bundle root '${STAGING_BUNDLE_ROOT}'..."
+cp "$EFFECTIVE_README_SOURCE_FILE" "${STAGING_BUNDLE_ROOT}/README.md"
 
-info "Copying remaining 'exportcliv2-deploy' contents to '${STAGED_DEPLOY_SUBDIR}'..."
-rsync -av \
+if [[ -f "${EFFECTIVE_INSTALLER_SOURCE_DIR}/USER_GUIDE.md" ]]; then
+    info "Copying USER_GUIDE.md to bundle root '${STAGING_BUNDLE_ROOT}'..."
+    cp "${EFFECTIVE_INSTALLER_SOURCE_DIR}/USER_GUIDE.md" "${STAGING_BUNDLE_ROOT}/USER_GUIDE.md"
+fi
+
+info "Copying remaining '${DEPLOY_SUBDIR_NAME}' contents from '${EFFECTIVE_INSTALLER_SOURCE_DIR}/${DEPLOY_SUBDIR_NAME}/' to '${STAGED_DEPLOY_SUBDIR}'..."
+rsync -av --checksum \
   --exclude="${DEPLOY_ORCHESTRATOR_SOURCE_NAME}" \
   --exclude="*~" \
   --exclude="*.bak" \
   --exclude="*-org.sh" \
   --exclude="*.swp" \
-  "${INSTALLER_DEV_DIR}/exportcliv2-deploy/" "$STAGED_DEPLOY_SUBDIR/"
+  --exclude="test_plan.md" \
+  "${EFFECTIVE_INSTALLER_SOURCE_DIR}/${DEPLOY_SUBDIR_NAME}/" "$STAGED_DEPLOY_SUBDIR/" # Note trailing slashes
 
 info "Copying datamover wheel '$DATAMOVER_WHEEL_FILENAME' to '${STAGED_DEPLOY_SUBDIR}'"
 cp "$datamover_wheel_file" "${STAGED_DEPLOY_SUBDIR}/${DATAMOVER_WHEEL_FILENAME}"
 
-if [[ -n "$PRODUCTION_BINARY_PATH" ]]; then
-  info "Copying production binary '$PRODUCTION_BINARY_FILENAME' to '${STAGED_DEPLOY_SUBDIR}'"
-  cp "$PRODUCTION_BINARY_PATH" "${STAGED_DEPLOY_SUBDIR}/${PRODUCTION_BINARY_FILENAME}"
-fi
-if [[ -n "$EMULATOR_BINARY_PATH" ]]; then
+info "Copying production binary '$PRODUCTION_BINARY_FILENAME' to '${STAGED_DEPLOY_SUBDIR}'"
+cp "$PRODUCTION_BINARY_PATH" "${STAGED_DEPLOY_SUBDIR}/${PRODUCTION_BINARY_FILENAME}"
+
+if [[ -n "$EMULATOR_BINARY_FILENAME" ]]; then
   info "Copying emulator binary '$EMULATOR_BINARY_FILENAME' to '${STAGED_DEPLOY_SUBDIR}'"
   cp "$EMULATOR_BINARY_PATH" "${STAGED_DEPLOY_SUBDIR}/${EMULATOR_BINARY_FILENAME}"
 fi
 
-info "Copying dependency wheels from '${OFFLINE_WHEELS_SOURCE_DIR}' to staged wheelhouse '${STAGED_WHEELHOUSE_DIR}'..."
-if ls "${OFFLINE_WHEELS_SOURCE_DIR}"/*.whl &> /dev/null; then
-    cp "${OFFLINE_WHEELS_SOURCE_DIR}"/*.whl "${STAGED_WHEELHOUSE_DIR}/"
+info "Copying dependency wheels from '${EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR}' to staged wheelhouse '${STAGED_WHEELHOUSE_DIR}'..."
+if ls "${EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR}"/*.whl &> /dev/null; then
+    cp "${EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR}"/*.whl "${STAGED_WHEELHOUSE_DIR}/"
     info "Dependency wheels copied."
 else
-    warn "No .whl files found in '${OFFLINE_WHEELS_SOURCE_DIR}' to copy to wheelhouse. Wheelhouse might be empty."
+    warn "No .whl files found in '${EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR}' to copy to wheelhouse. Wheelhouse might be empty."
 fi
 
 # --- Update install-app.conf in Staging Area ---
 STAGED_INSTALL_APP_CONF="${STAGED_DEPLOY_SUBDIR}/install-app.conf"
 info "Updating staged configuration: $STAGED_INSTALL_APP_CONF"
-if [[ ! -f "$STAGED_INSTALL_APP_CONF" ]]; then error_exit "Staged install-app.conf not found: $STAGED_INSTALL_APP_CONF."; fi
+if [[ ! -f "$STAGED_INSTALL_APP_CONF" ]]; then error_exit "Staged install-app.conf not found: $STAGED_INSTALL_APP_CONF. Check rsync copy."; fi
 
 update_or_append_config() {
     local key="$1"
     local value="$2"
     local config_file="$3"
-    local temp_file="${config_file}.tmpvalupdate" # Unique temp file for this function call
+    local temp_file_suffix="_update_config_temp"
+    # Ensure temp_file is in a writable location, preferably the same dir as config_file to avoid mv across filesystems
+    local temp_file
+    temp_file=$(mktemp "${config_file}${temp_file_suffix}.XXXXXX")
 
     cp "$config_file" "$temp_file"
-    if grep -q "^\s*${key}\s*=" "$temp_file"; then
+    # Using # as sed delimiter to handle potential slashes in value, though value is quoted here.
+    # Ensure that `value` itself doesn't contain the delimiter used by sed.
+    # Since `value` is double-quoted by the caller, internal double quotes would need careful handling if allowed.
+    if grep -q -E "^\s*${key}\s*=" "$temp_file"; then
         sed -E "s#^(\s*${key}\s*=\s*).*#\1${value}#" "$temp_file" > "$config_file"
         debug_bundle "Updated '$key' in $config_file."
     else
-        info "Appending '$key=${value}' to $config_file."
+        info "Key '$key' not found, appending '$key=${value}' to $config_file."
         # Ensure newline if appending to a file that might not end with one
         if [[ $(tail -c1 "$config_file" | wc -l) -eq 0 && -s "$config_file" ]]; then echo >> "$config_file"; fi
         echo "${key}=${value}" >> "$config_file"
@@ -254,9 +324,10 @@ update_or_append_config() {
     rm "$temp_file"
 }
 
+# Ensure filenames with spaces or special characters are handled by quoting them for the INI file
 CONFIGURED_APP_BINARY_REPLACEMENT_VALUE="\"$CONFIGURED_APP_BINARY_FILENAME\""
 DATAMOVER_WHEEL_REPLACEMENT_VALUE="\"$DATAMOVER_WHEEL_FILENAME\""
-WHEELHOUSE_SUBDIR_REPLACEMENT_VALUE="\"${WHEELHOUSE_TARGET_SUBDIR_NAME}\""
+WHEELHOUSE_SUBDIR_REPLACEMENT_VALUE="\"${WHEELHOUSE_TARGET_SUBDIR_NAME}\"" # Should be simple, but quote for consistency
 
 update_or_append_config "VERSIONED_APP_BINARY_FILENAME" "$CONFIGURED_APP_BINARY_REPLACEMENT_VALUE" "$STAGED_INSTALL_APP_CONF"
 update_or_append_config "VERSIONED_DATAMOVER_WHEEL_FILENAME" "$DATAMOVER_WHEEL_REPLACEMENT_VALUE" "$STAGED_INSTALL_APP_CONF"
@@ -265,20 +336,13 @@ update_or_append_config "WHEELHOUSE_SUBDIR" "$WHEELHOUSE_SUBDIR_REPLACEMENT_VALU
 info "Staged install-app.conf processed."
 
 # --- Set Script Permissions ---
-info "Setting executable permissions for .sh files in the bundle..."
-find "${STAGING_BUNDLE_ROOT}" -maxdepth 1 -type f -name "*.sh" -print0 | while IFS= read -r -d $'\0' script_file; do
-  debug_bundle "Making executable (bundle root): $script_file"
-  chmod +x "$script_file"
-done
-find "${STAGED_DEPLOY_SUBDIR}" -type f -name "*.sh" -print0 | while IFS= read -r -d $'\0' script_file; do
-  debug_bundle "Making executable (deploy subdir): $script_file"
-  chmod +x "$script_file"
-done
+info "Setting executable permissions for .sh files and binaries in the bundle..."
+# Use -print0 and xargs -0 for safety with filenames
+find "${STAGING_BUNDLE_ROOT}" -maxdepth 1 -type f -name "*.sh" -print0 | xargs -0 -I {} chmod +x {}
+find "${STAGED_DEPLOY_SUBDIR}" -type f -name "*.sh" -print0 | xargs -0 -I {} chmod +x {}
 
-if [[ -n "$PRODUCTION_BINARY_FILENAME" ]]; then
-    chmod +x "${STAGED_DEPLOY_SUBDIR}/${PRODUCTION_BINARY_FILENAME}"
-    debug_bundle "Made executable: ${STAGED_DEPLOY_SUBDIR}/${PRODUCTION_BINARY_FILENAME}"
-fi
+chmod +x "${STAGED_DEPLOY_SUBDIR}/${PRODUCTION_BINARY_FILENAME}"
+debug_bundle "Made executable: ${STAGED_DEPLOY_SUBDIR}/${PRODUCTION_BINARY_FILENAME}"
 if [[ -n "$EMULATOR_BINARY_FILENAME" ]]; then
     chmod +x "${STAGED_DEPLOY_SUBDIR}/${EMULATOR_BINARY_FILENAME}"
     debug_bundle "Made executable: ${STAGED_DEPLOY_SUBDIR}/${EMULATOR_BINARY_FILENAME}"
@@ -288,74 +352,85 @@ info "Executable permissions set."
 # --- Comprehensive File Check in Staging Area ---
 info "Verifying contents of the staged bundle at '${STAGING_BUNDLE_ROOT}'..."
 all_files_ok=true
+# This list should match the expected bundle structure from USER_GUIDE.md and installer needs.
 declare -A expected_bundle_contents=(
-    ["${DEPLOY_ORCHESTRATOR_SOURCE_NAME}"]="file"
-    ["${PATCH_SCRIPT_NAME}"]="file"
-    ["QUICK_START_GUIDE.md"]="file"
-    ["USER_GUIDE.md"]="file"
-    ["exportcliv2-deploy/install_base_exportcliv2.sh"]="file"
-    ["exportcliv2-deploy/configure_instance.sh"]="file"
-    ["exportcliv2-deploy/manage_services.sh"]="file"
-    ["exportcliv2-deploy/install-app.conf"]="file"
-    ["exportcliv2-deploy/${DATAMOVER_WHEEL_FILENAME}"]="file"
-    ["exportcliv2-deploy/config_files"]="dir"
-    ["exportcliv2-deploy/config_files/common.auth.conf"]="file"
-    ["exportcliv2-deploy/config_files/config.ini.template"]="file"
-    ["exportcliv2-deploy/config_files/run_exportcliv2_instance.sh.template"]="file"
-    ["exportcliv2-deploy/systemd_units"]="dir"
-    ["exportcliv2-deploy/systemd_units/bitmover.service.template"]="file"
-    ["exportcliv2-deploy/systemd_units/exportcliv2@.service.template"]="file"
-    ["exportcliv2-deploy/systemd_units/exportcliv2-restart@.path.template"]="file"
-    ["exportcliv2-deploy/systemd_units/exportcliv2-restart@.service.template"]="file"
-    ["exportcliv2-deploy/${WHEELHOUSE_TARGET_SUBDIR_NAME}"]="dir"
+    ["${DEPLOY_ORCHESTRATOR_SOURCE_NAME}"]="file" # In bundle root
+    ["${PATCH_SCRIPT_NAME}"]="file"               # In bundle root
+    ["README.md"]="file"                          # In bundle root
+    # USER_GUIDE.md is optional, checked separately if present
+    ["${DEPLOY_SUBDIR_NAME}/install_base_exportcliv2.sh"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/configure_instance.sh"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/manage_services.sh"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/install-app.conf"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/${DATAMOVER_WHEEL_FILENAME}"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/config_files"]="dir"
+    ["${DEPLOY_SUBDIR_NAME}/config_files/common.auth.conf"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/config_files/config.ini.template"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/config_files/run_exportcliv2_instance.sh.template"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/systemd_units"]="dir"
+    ["${DEPLOY_SUBDIR_NAME}/systemd_units/bitmover.service.template"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/systemd_units/exportcliv2@.service.template"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/systemd_units/exportcliv2-restart@.path.template"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/systemd_units/exportcliv2-restart@.service.template"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/${WHEELHOUSE_TARGET_SUBDIR_NAME}"]="dir"
 )
-if [[ -n "$PRODUCTION_BINARY_FILENAME" ]]; then
-  expected_bundle_contents["exportcliv2-deploy/${PRODUCTION_BINARY_FILENAME}"]="file"
+if [[ -f "${EFFECTIVE_INSTALLER_SOURCE_DIR}/USER_GUIDE.md" ]]; then
+  expected_bundle_contents["USER_GUIDE.md"]="file" # Add to check if it was supposed to be copied
 fi
+expected_bundle_contents["${DEPLOY_SUBDIR_NAME}/${PRODUCTION_BINARY_FILENAME}"]="file"
 if [[ -n "$EMULATOR_BINARY_FILENAME" ]]; then
-  expected_bundle_contents["exportcliv2-deploy/${EMULATOR_BINARY_FILENAME}"]="file"
+  expected_bundle_contents["${DEPLOY_SUBDIR_NAME}/${EMULATOR_BINARY_FILENAME}"]="file"
 fi
 
-for item_path in "${!expected_bundle_contents[@]}"; do
-    item_type="${expected_bundle_contents[$item_path]}"
-    full_path="${STAGING_BUNDLE_ROOT}/${item_path}"
+for item_path_rel_to_bundle_root in "${!expected_bundle_contents[@]}"; do
+    item_type="${expected_bundle_contents[$item_path_rel_to_bundle_root]}"
+    full_path_in_staging="${STAGING_BUNDLE_ROOT}/${item_path_rel_to_bundle_root}"
     check_passed=true
-    if [[ "$item_type" == "file" && ! -f "$full_path" ]]; then check_passed=false
-    elif [[ "$item_type" == "dir" && ! -d "$full_path" ]]; then check_passed=false
+    if [[ "$item_type" == "file" && ! -f "$full_path_in_staging" ]]; then check_passed=false
+    elif [[ "$item_type" == "dir" && ! -d "$full_path_in_staging" ]]; then check_passed=false
     fi
+
     if [[ "$check_passed" == false ]]; then
-        warn "Bundle Verification FAILED: Expected $item_type missing at '$item_path' (full: '$full_path')"
+        warn "Bundle Verification FAILED: Expected $item_type missing at bundle path '$item_path_rel_to_bundle_root' (checked as '$full_path_in_staging')"
         all_files_ok=false
     else
-        debug_bundle "Bundle Verification OK: Found $item_type at '$item_path'"
+        debug_bundle "Bundle Verification OK: Found $item_type at bundle path '$item_path_rel_to_bundle_root'"
     fi
 done
 
+# Specific check for wheelhouse contents if it was expected to have wheels
 if [[ "$all_files_ok" == true && -d "${STAGED_WHEELHOUSE_DIR}" ]]; then
-    if ls "${OFFLINE_WHEELS_SOURCE_DIR}"/*.whl &> /dev/null; then
+    # Check if source had wheels
+    source_had_wheels=false
+    if ls "${EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR}"/*.whl &> /dev/null; then
+        source_had_wheels=true
+    fi
+
+    if [[ "$source_had_wheels" == true ]]; then
         if ! ls "${STAGED_WHEELHOUSE_DIR}"/*.whl &> /dev/null; then
-            warn "Bundle Verification WARNING: Wheelhouse dir '${STAGED_WHEELHOUSE_DIR}' is empty, but source '${OFFLINE_WHEELS_SOURCE_DIR}' had wheels."
+            warn "Bundle Verification WARNING: Wheelhouse dir '${STAGED_WHEELHOUSE_DIR}' is empty, but source '${EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR}' had wheels."
+            # Depending on strictness, this could set all_files_ok=false
         else
-            debug_bundle "Bundle Verification OK: Wheelhouse contains .whl files."
+            debug_bundle "Bundle Verification OK: Wheelhouse contains .whl files as expected."
         fi
     fi
 fi
 
 if [[ "$all_files_ok" == false ]]; then
-    error_exit "Bundle verification failed. Critical files/directories are missing in the staging area."
+    error_exit "Bundle verification failed. Critical files/directories are missing in the staging area. Check warnings above."
 else
     info "Bundle contents verified successfully in staging area."
 fi
 
 # --- Create Tarball ---
-info "Creating tarball: ${ARCHIVE_NAME}"
+info "Creating tarball: ${ARCHIVE_NAME} in $(realpath "${PROJECT_ROOT_DIR}")"
+# Create tarball in the project root directory, not inside STAGING_DIR
 (
-  cd "$STAGING_DIR" || exit 1
-  tar -czf "../${ARCHIVE_NAME}" "$BUNDLE_TOP_DIR"
+  cd "$STAGING_TOP_LEVEL_DIR" || { error_exit "Failed to cd into staging dir '$STAGING_TOP_LEVEL_DIR' for tar creation."; }
+  tar -czf "${PROJECT_ROOT_DIR}/${ARCHIVE_NAME}" "$BUNDLE_TOP_DIR_NAME"
 ) || error_exit "Failed to create tarball."
 
-info "--- Bundle Created Successfully: ${ARCHIVE_NAME} ---"
-info "Located at: $(pwd)/${ARCHIVE_NAME}"
-info "To inspect contents (permissions visible with -tvf): tar -tzvf ${ARCHIVE_NAME}"
+info "--- Bundle Created Successfully: ${PROJECT_ROOT_DIR}/${ARCHIVE_NAME} ---"
+info "To inspect contents (permissions visible with -tvf): tar -tzvf \"${PROJECT_ROOT_DIR}/${ARCHIVE_NAME}\""
 
 exit 0
