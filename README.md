@@ -1,4 +1,4 @@
-## Quick Start Guide: exportcliv2 Application Suite (v0.1.2)
+## README: exportcliv2 Application Suite (v1.0.0)
 
 This guide walks you through installing the `exportcliv2` application suite, which includes the `exportcliv2` data export client and the Bitmover service (responsible for PCAP uploads).
 
@@ -43,8 +43,7 @@ All installation, patching, and service management commands in this guide **must
         ```
 
 3.  **Installation Package:**
-    *   Ensure you have the application suite package: `exportcliv2-suite-vX.Y.Z.tar.gz`.
-        *(Replace `vX.Y.Z` with the actual version you are installing, e.g., `v0.1.2`)*.
+    *   Ensure you have the application suite package: `exportcliv2-suite-v1.0.0.tar.gz`.
 
 4.  **Python 3 Environment:**
     *   The Bitmover service's DataMover component requires Python 3 (typically Python 3.9.x on Oracle Linux 9) and its standard `venv` module.
@@ -63,16 +62,16 @@ All installation, patching, and service management commands in this guide **must
 **Step 1: Prepare the Installation Package**
 *(Unpack the suite to access installer scripts.)*
 
-1.  Copy `exportcliv2-suite-vX.Y.Z.tar.gz` to your server (e.g., into `/root/`).
+1.  Copy `exportcliv2-suite-v1.0.0.tar.gz` to your server (e.g., into `/root/`).
 2.  Log in as `root` (if not already) and navigate to where you placed the package.
 3.  Extract the archive:
     ```bash
-    tar vxf exportcliv2-suite-vX.Y.Z.tar.gz
+    tar vxf exportcliv2-suite-v1.0.0.tar.gz
     ```
-    This creates a directory like `exportcliv2-suite-vX.Y.Z/`.
+    This creates a directory like `exportcliv2-suite-v1.0.0/`.
 4.  Navigate into the extracted directory:
     ```bash
-    cd exportcliv2-suite-vX.Y.Z/
+    cd exportcliv2-suite-v1.0.0/
     ```
     > **Important:** All subsequent `deploy_orchestrator.sh` and `install_patch.sh` commands in this guide must be run from within this extracted bundle directory.
 
@@ -81,32 +80,32 @@ All installation, patching, and service management commands in this guide **must
 **Step 2: Review Installer Configuration (`install-app.conf`)**
 *(Check the bundle's default settings before installation.)*
 
-The main configuration file *for the installer scripts within the bundle* is located at `exportcliv2-deploy/install-app.conf`.
+The main configuration file *for the installer scripts within the bundle* is located at `exportcliv2-deploy/install-app.conf`. This file contains defaults that will be used during the installation process.
 
 1.  **View the Bundle's Installer Configuration:**
     ```bash
     cat exportcliv2-deploy/install-app.conf
     ```
-    ### Key settings you might see (example values):
+    ### Key settings you will see (values are defaults for v1.0.0):
     ```ini
     # install-app.conf (This file is in your bundle, NOT on the live system yet)
-    DEFAULT_INSTANCES_CONFIG="AAA" # Default exportcliv2 instance(s) to set up
-    VERSIONED_APP_BINARY_FILENAME="exportcliv2-0.4.0-B1771-24.11.15" # Initial binary
-    VERSIONED_DATAMOVER_WHEEL_FILENAME="datamover-0.1.2-py3-none-any.whl"
-    REMOTE_HOST_URL_CONFIG="http://192.168.0.180:8989/pcap"
+    DEFAULT_INSTANCES_CONFIG="AAA"
+    VERSIONED_APP_BINARY_FILENAME="exportcliv2-v0.4.0-B1771-24.11.15" # Actual binary filename in bundle
+    VERSIONED_DATAMOVER_WHEEL_FILENAME="datamover-1.0.0-py3-none-any.whl" # Actual wheel filename in bundle
+    REMOTE_HOST_URL_CONFIG="http://192.168.0.180:8989/pcap" # Default production endpoint
     EXPORT_TIMEOUT_CONFIG="15"
     USER_CONFIG="exportcliv2_user"
-    GROUP_CONFIG="datapipeline_group"
-    BASE_DIR_CONFIG="/var/tmp/testme" # For testing; consider /opt/exportcliv2 for production
+    GROUP_CONFIG="exportcliv2_group" # Default service group
+    BASE_DIR_CONFIG="/opt/bitmover"   # Default base installation directory
     WHEELHOUSE_SUBDIR="wheelhouse"
-    LOG_DIR_CONFIG="/var/log/exportcliv2/" # Base for application logs
+    LOG_DIR_CONFIG="/var/log/exportcliv2/"
     ```
+    > **Note on Default Settings:** The `BASE_DIR_CONFIG` and `REMOTE_HOST_URL_CONFIG` are key defaults. If you need to use different values for a specific installation *before the very first install*, you can edit this `exportcliv2-deploy/install-app.conf` file within the extracted bundle prior to running `deploy_orchestrator.sh --install`.
+
     > **Note on Quotes:** In `.ini` style files, quotes around values are generally optional unless the value contains spaces or special characters.
 
-    > **Note on Production Paths:** For production deployments, consider changing `BASE_DIR_CONFIG` in this bundle file to a path like `/opt/exportcliv2` *before* running the first installation.
-
 2.  **Edit (Optional, Before First Install):**
-    If you need to change settings like `DEFAULT_INSTANCES_CONFIG` or `BASE_DIR_CONFIG` *before the very first installation*, edit the file:
+    If you need to change settings like `BASE_DIR_CONFIG` *before the very first installation*, edit the file within the extracted bundle:
     ```bash
     vi exportcliv2-deploy/install-app.conf
     ```
@@ -116,7 +115,7 @@ The main configuration file *for the installer scripts within the bundle* is loc
 **Step 3: Run the Installation**
 *(Execute the main deployment script to install base components and default instances.)*
 
-1.  From within the `exportcliv2-suite-vX.Y.Z/` directory, execute:
+1.  From within the `exportcliv2-suite-v1.0.0/` directory, execute:
     ```bash
     ./deploy_orchestrator.sh --install
     ```
@@ -147,7 +146,7 @@ You **must** edit the system configuration file for each `exportcliv2` instance 
     EXPORT_TIMEOUT="15"
     EXPORT_SOURCE="AAA"
     EXPORT_STARTTIME_OFFSET_SPEC="3 minutes ago"
-    EXPORT_ENDTIME="-1"
+    EXPORT_ENDTIME="-1" # Note: Export end time is fixed at -1 in the current version
     # ---- EDIT THESE TWO LINES FOR YOUR ENVIRONMENT ----
     EXPORT_IP="<YOUR_DATA_SOURCE_IP>" # e.g., "10.0.0.1"
     EXPORT_PORTID="<YOUR_PORT_ID>"    # e.g., "1"
@@ -194,16 +193,16 @@ exportcli-manage -i AAA --restart
 **Step 7: Understanding Key Directories and Files**
 *(Learn where important application files and data are located on the system.)*
 
-Key paths are recorded in `/etc/default/exportcliv2_base_vars`.
-*   **Base Application Directory:** (e.g., `/var/tmp/testme/`). Check `BASE_DIR` in `base_vars`.
-    *   `bin/`: Executables (e.g., `exportcliv2-0.4.0-...`), `exportcliv2` symlink, helper scripts.
+Key paths are recorded in `/etc/default/exportcliv2_base_vars`. The default base application directory is `/opt/bitmover/`.
+*   **Base Application Directory:** (e.g., `/opt/bitmover/`). Check `BASE_DIR` in `/etc/default/exportcliv2_base_vars`.
+    *   `bin/`: Executables (e.g., `exportcliv2-v0.4.0-B1771-24.11.15`), the `exportcliv2` symlink, helper scripts.
     *   `csv/`: Metadata (`AAA.csv`), restart triggers.
     *   `datamover_venv/`: Python environment for Bitmover.
     *   `source/`, `worker/`, `uploaded/`, `dead_letter/`: Bitmover working directories.
-*   **System Configuration Directory:** `/etc/exportcliv2/` (Check `ETC_DIR` in `base_vars`).
+*   **System Configuration Directory:** `/etc/exportcliv2/` (Check `ETC_DIR` in `/etc/default/exportcliv2_base_vars`).
     *   Instance configs: `AAA.conf`, `AAA_app.conf`.
     *   Common configs: `common.auth.conf`, `config.ini`.
-*   **Base Log Directory:** `/var/log/exportcliv2/` (Check `BITMOVER_LOG_DIR`'s parent in `base_vars`).
+*   **Base Log Directory:** `/var/log/exportcliv2/` (Check `BITMOVER_LOG_DIR`'s parent in `/etc/default/exportcliv2_base_vars`).
     *   `bitmover/`: `app.log.jsonl`, `audit.log.jsonl`.
     *   `AAA/`: Instance file logs (e.g., `exportcliv2_<DATE>.log`). `exportcliv2` instances also log to the system journal.
 
@@ -232,43 +231,39 @@ Use `exportcli-manage` or view files directly.
 *(Update your local installation bundle with a new binary or wheel before deploying it.)*
 
 1.  **Navigate to your Installation Package Directory:**
-    This is the directory you extracted in Step 1 (e.g., `/root/exportcliv2-suite-vX.Y.Z/`), which contains `install_patch.sh`.
+    This is the directory you extracted in Step 1 (e.g., `/root/exportcliv2-suite-v1.0.0/`), which contains `install_patch.sh`.
     ```bash
-    cd /root/exportcliv2-suite-vX.Y.Z/ # Adjust to your actual path
+    cd /root/exportcliv2-suite-v1.0.0/ # Adjust to your actual path
     ```
 
 2.  **Run `install_patch.sh` with an *absolute path* to the new component:**
-    *   **To use a different binary already present *within this bundle's staging area* (e.g., an emulator like `exportcliv8` located in `./exportcliv2-deploy/`):**
-        First, ensure the desired binary (e.g., `exportcliv8`) exists in the `./exportcliv2-deploy/` subdirectory of your current bundle. Then, get its absolute path:
+    *   **To use a different binary already present *within this bundle's `exportcliv2-deploy/` directory* (e.g., an included emulator like `exportcliv8`):**
         ```bash
-        # Example: In /root/exportcliv2-suite-vX.Y.Z/
-        # ABSOLUTE_PATH_TO_BUNDLED_EMULATOR=$(realpath ./exportcliv2-deploy/exportcliv8)
-        # ./install_patch.sh --new-binary "${ABSOLUTE_PATH_TO_BUNDLED_EMULATOR}"
-        # A simpler way if you know the name:
+        # Example: In /root/exportcliv2-suite-v1.0.0/
         ./install_patch.sh --new-binary "$(pwd)/exportcliv2-deploy/exportcliv8"
         ```
 
     *   **To apply an *externally provided* new binary (a patch file not in this bundle):**
         Suppose the new binary patch is located at `/tmp/exportcliv2-patch-vNEW`.
         ```bash
-        # Example: In /root/exportcliv2-suite-vX.Y.Z/
+        # Example: In /root/exportcliv2-suite-v1.0.0/
         ./install_patch.sh --new-binary /tmp/exportcliv2-patch-vNEW
         ```
 
     *   **To apply an *externally provided* new DataMover wheel:**
         Suppose the new wheel is at `/tmp/datamover-patch-vNEW.whl`.
         ```bash
-        # Example: In /root/exportcliv2-suite-vX.Y.Z/
+        # Example: In /root/exportcliv2-suite-v1.0.0/
         ./install_patch.sh --new-wheel /tmp/datamover-patch-vNEW.whl
         ```
-    The `install_patch.sh` script copies the component into this bundle's `./exportcliv2-deploy/` directory and updates `./exportcliv2-deploy/install-app.conf`.
+    The `install_patch.sh` script copies the component into this bundle's `./exportcliv2-deploy/` directory and updates the `VERSIONED_APP_BINARY_FILENAME` or `VERSIONED_DATAMOVER_WHEEL_FILENAME` in `./exportcliv2-deploy/install-app.conf`.
 
 ---
 
 **Step 10: Deploying a Prepared/Patched Bundle**
 *(Apply the changes from your updated local bundle to the live system.)*
 
-1.  **Ensure you are still in your Installation Package Directory** (e.g., `/root/exportcliv2-suite-vX.Y.Z/`).
+1.  **Ensure you are still in your Installation Package Directory** (e.g., `/root/exportcliv2-suite-v1.0.0/`).
 
 2.  **Run the Orchestrator in Update Mode:**
     ```bash
@@ -282,12 +277,12 @@ Use `exportcli-manage` or view files directly.
     *   **If DataMover wheel changed:** Restart the Bitmover service (`exportcli-manage --restart`).
 
 4.  **Verify Operation:**
-    Check status and logs. Verify the active binary symlink (replace `/var/tmp/testme` with your `BASE_DIR`):
+    Check status and logs. Verify the active binary symlink (replace `/opt/bitmover` with your `BASE_DIR` from `/etc/default/exportcliv2_base_vars` if it was changed post-install):
     ```bash
-    ls -l /var/tmp/testme/bin/exportcliv2
+    ls -l /opt/bitmover/bin/exportcliv2
     ```
 
-> **Note on SELinux/AppArmor:** If using non-standard paths for `BASE_DIR_CONFIG`, security contexts might need adjustment (e.g., `semanage fcontext`, `restorecon`). Default paths usually work with standard policies.
+> **Note on SELinux/AppArmor:** If using non-standard paths for `BASE_DIR_CONFIG` (i.e., other than the default `/opt/bitmover/` used during the initial installation), security contexts might need adjustment (e.g., `semanage fcontext`, `restorecon`). The default path is generally chosen to work with standard system policies.
 
 ---
 
@@ -309,4 +304,6 @@ Use `exportcli-manage` or view files directly.
 
 **Further Information**
 
-For more detailed information, refer to the full User Guide or examine the scripts and configuration templates within the bundle.
+For more detailed information, refer to the full `USER_GUIDE.md` document included in this bundle or examine the scripts and configuration templates within the `exportcliv2-deploy` directory.
+
+---
