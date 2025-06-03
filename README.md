@@ -256,8 +256,7 @@ Use `exportcli-manage` or view files directly.
         # Example: In /root/exportcliv2-suite-v1.0.0/
         ./install_patch.sh --new-wheel /tmp/datamover-patch-vNEW.whl
         ```
-    The `install_patch.sh` script copies the component into this bundle's `./exportcliv2-deploy/` directory and updates the `VERSIONED_APP_BINARY_FILENAME` or `VERSIONED_DATAMOVER_WHEEL_FILENAME` in `./exportcliv2-deploy/install-app.conf`.
-
+    "The install_patch.sh script ensures the specified component is present in this bundle's ./exportcliv2-deploy/ directory (copying it from the provided path if it's different or external) and updates the VERSIONED_APP_BINARY_FILENAME or VERSIONED_DATAMOVER_WHEEL_FILENAME in ./exportcliv2-deploy/install-app.conf."
 ---
 
 **Step 10: Deploying a Prepared/Patched Bundle**
