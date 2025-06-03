@@ -78,14 +78,14 @@ toml = [
 
 [[package]]
 name = "datamover"
-version = "0.1.3"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "requests" },
     { name = "watchdog" },
 ]
 
-[package.dev-dependencies]
+[package.optional-dependencies]
 dev = [
     { name = "mypy" },
     { name = "pip" },
@@ -99,21 +99,18 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.15.0" },
+    { name = "pip", marker = "extra == 'dev'", specifier = ">=25.1.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.5" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.1.1" },
+    { name = "pytest-httpserver", marker = "extra == 'dev'", specifier = ">=1.1.3" },
+    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.14.0" },
+    { name = "pytest-mypy-plugins", marker = "extra == 'dev'", specifier = ">=3.2.0" },
     { name = "requests", specifier = ">=2.32.3" },
+    { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.32" },
     { name = "watchdog", specifier = ">=6.0.0" },
 ]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.15.0" },
-    { name = "pip", specifier = ">=25.1.1" },
-    { name = "pytest", specifier = ">=8.3.5" },
-    { name = "pytest-cov", specifier = ">=6.1.1" },
-    { name = "pytest-httpserver", specifier = ">=1.1.3" },
-    { name = "pytest-mock", specifier = ">=3.14.0" },
-    { name = "pytest-mypy-plugins", specifier = ">=3.2.0" },
-    { name = "types-requests", specifier = ">=2.32" },
-]
+provides-extras = ["dev"]
 
 [[package]]
 name = "decorator"
