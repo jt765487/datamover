@@ -136,7 +136,7 @@ def _define_thread_factory_specs(
                 # "total_disk_capacity_bytes": cfg.purger_total_disk_capacity_bytes,
                 # "target_disk_usage_percent": cfg.purger_target_disk_usage_percent,
                 # "check_interval_seconds": cfg.purger_check_interval_seconds,
-                "total_disk_capacity_bytes": 1000,
+                "total_disk_capacity_bytes": 1024 * 1024 * 1024 * 1024,  # Example: 1 GiB for testing
                 "target_disk_usage_percent": 0.8,
                 "check_interval_seconds": 60.0,
                 "stop_event": context.shutdown_event,
