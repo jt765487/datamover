@@ -6,13 +6,20 @@ set -euo pipefail
 
 # --- Instance Name from Argument ---
 if [[ -z "$1" ]]; then
+  # Log to stderr (for immediate journalctl context) and syslog (for alerting/filtering)
   echo "Error: Instance name argument (%i) not provided to wrapper script." >&2
+  logger -t "{{APP_NAME}}" -p daemon.error "Instance name argument (%i) not provided to wrapper script."
   exit 78 # EX_CONFIG
 fi
 INSTANCE_NAME="$1"
+LOGGER_TAG="{{APP_NAME}}@${INSTANCE_NAME}"
 
 # --- Log script start (optional but helpful) ---
-echo "Wrapper script for {{APP_NAME}}@${INSTANCE_NAME} starting..."
+echo "Wrapper script for ${LOGGER_TAG} starting..."
+
+# --- Constants ---
+# A value of -1 indicates the application should run indefinitely with no end time.
+readonly INDEFINITE_RUN_ARG="-1"
 
 # --- Sanity check required environment variables ---
 # These are expected to be set by systemd via EnvironmentFile directives
@@ -29,59 +36,84 @@ required_vars=(
 )
 for var_name in "${required_vars[@]}"; do
   if [[ -z "${!var_name:-}" ]]; then # Indirect expansion
-    echo "Error: {{APP_NAME}}@${INSTANCE_NAME}: Required environment variable '${var_name}' is not set. Check {{ETC_DIR}}/common.auth.conf and {{ETC_DIR}}/${INSTANCE_NAME}.conf." >&2
+    error_msg="Required environment variable '${var_name}' is not set. Check {{ETC_DIR}}/common.auth.conf and {{ETC_DIR}}/${INSTANCE_NAME}.conf."
+    echo "Error: ${LOGGER_TAG}: ${error_msg}" >&2
+    logger -t "${LOGGER_TAG}" -p daemon.error "${error_msg}"
     exit 78 # EX_CONFIG
   fi
 done
 
 # --- Calculate dynamic start time ---
-# Uses EXPORT_STARTTIME_OFFSET_SPEC from the environment
-calculated_start_time=$(date +%s%3N --date="${EXPORT_STARTTIME_OFFSET_SPEC}" 2>/dev/null)
-
-if [[ -z "$calculated_start_time" ]]; then
-  echo "Error: {{APP_NAME}}@${INSTANCE_NAME}: Could not calculate start_time using EXPORT_STARTTIME_OFFSET_SPEC ('${EXPORT_STARTTIME_OFFSET_SPEC}'). Check this variable in {{ETC_DIR}}/${INSTANCE_NAME}.conf and ensure 'date' command works." >&2
+# Uses EXPORT_STARTTIME_OFFSET_SPEC from the environment.
+# The 'if !' construct is safer than checking for empty output.
+if ! calculated_start_time=$(date +%s%3N --date="${EXPORT_STARTTIME_OFFSET_SPEC}"); then
+  error_msg="Could not calculate start_time using EXPORT_STARTTIME_OFFSET_SPEC ('${EXPORT_STARTTIME_OFFSET_SPEC}')."
+  echo "Error: ${LOGGER_TAG}: ${error_msg}" >&2
+  logger -t "${LOGGER_TAG}" -p daemon.error "${error_msg}"
   exit 78 # EX_CONFIG
 fi
 
 # --- Check if the app-specific config file actually exists ---
 if [[ ! -f "${EXPORT_APP_CONFIG_FILE_PATH}" ]]; then
-    echo "Error: {{APP_NAME}}@${INSTANCE_NAME}: Application specific config file specified by EXPORT_APP_CONFIG_FILE_PATH ('${EXPORT_APP_CONFIG_FILE_PATH}') does not exist." >&2
+    error_msg="Application specific config file specified by EXPORT_APP_CONFIG_FILE_PATH ('${EXPORT_APP_CONFIG_FILE_PATH}') does not exist."
+    echo "Error: ${LOGGER_TAG}: ${error_msg}" >&2
+    logger -t "${LOGGER_TAG}" -p daemon.error "${error_msg}"
     exit 78 # EX_CONFIG
 fi
 
-# --- Construct paths for arguments ---
+# --- Construct paths and arguments ---
 CSV_INSTANCE_DIR="{{CSV_DATA_DIR}}"
 SOURCE_INSTANCE_PATH="{{SOURCE_DATA_DIR}}/${EXPORT_SOURCE}"
 
-# --- Log execution details (optional, can be verbose) ---
-printf "Executing for %s: %s \\\n" "${INSTANCE_NAME}" "{{SYMLINK_EXECUTABLE_PATH}}"
-printf "  -c %s \\\n" "${EXPORT_APP_CONFIG_FILE_PATH}"
-printf "  -u %s \\\n" "***" # Mask auth token
-printf "  -p %s \\\n" "***" # Mask auth token
-printf "  -C \\\n"
-printf "  -t %s \\\n" "${EXPORT_TIMEOUT}"
-printf "  -H %s \\\n" "${CSV_INSTANCE_DIR}"
-printf "  -o %s \\\n" "${SOURCE_INSTANCE_PATH}"
-printf "  %s \\\n" "${EXPORT_IP}"
-printf "  %s \\\n" "${EXPORT_PORTID}"
-printf "  %s \\\n" "${calculated_start_time}"
-printf "  %s\n" "-1"
+# Build the argument list in an array for robustness and clarity.
+# This array contains the REAL credentials and will be used for execution.
+args=(
+  "-c" "${EXPORT_APP_CONFIG_FILE_PATH}"
+  "-u" "${EXPORT_AUTH_TOKEN_U}"
+  "-p" "${EXPORT_AUTH_TOKEN_P}"
+  "-C"
+  -t "${EXPORT_TIMEOUT}"
+  -H "${CSV_INSTANCE_DIR}"
+  -o "${SOURCE_INSTANCE_PATH}"
+  "${EXPORT_IP}"
+  "${EXPORT_PORTID}"
+  "${calculated_start_time}"
+  "${INDEFINITE_RUN_ARG}"
+)
+
+# --- Create a sanitized version of the command for logging ---
+# This iterates through the real arguments and replaces sensitive values.
+log_args_safe=()
+skip_next=false
+for arg in "${args[@]}"; do
+  if [[ "$skip_next" == true ]]; then
+    skip_next=false
+    continue
+  fi
+
+  case "$arg" in
+    -u|-p)
+      log_args_safe+=("$arg" "'***'") # Add the flag and the mask
+      skip_next=true # Tell the loop to ignore the next item (the real token)
+      ;;
+    *)
+      # Use printf %q to quote the argument exactly as the shell would need it.
+      # This handles spaces and special characters safely.
+      log_args_safe+=("$(printf '%q' "$arg")")
+      ;;
+  esac
+done
+
+# --- Log the final, sanitized command string ---
+printf "Executing for %s:\n  %q %s\n" \
+  "${INSTANCE_NAME}" \
+  "{{SYMLINK_EXECUTABLE_PATH}}" \
+  "${log_args_safe[*]}"
 
 # --- Execute the main application binary ---
-exec "{{SYMLINK_EXECUTABLE_PATH}}" \
-  -c "${EXPORT_APP_CONFIG_FILE_PATH}" \
-  -u "${EXPORT_AUTH_TOKEN_U}" \
-  -p "${EXPORT_AUTH_TOKEN_P}" \
-  -C \
-  -t "${EXPORT_TIMEOUT}" \
-  -H "${CSV_INSTANCE_DIR}" \
-  -o "${SOURCE_INSTANCE_PATH}" \
-  "${EXPORT_IP}" \
-  "${EXPORT_PORTID}" \
-  "${calculated_start_time}" \
-  -1
+# The shell expands "${args[@]}" into separate, quoted arguments.
+exec "{{SYMLINK_EXECUTABLE_PATH}}" "${args[@]}"
 
 # If exec fails, this script will exit.
 # If exec succeeds, this part is never reached.
-# Propagate exit status if exec were to somehow return control (highly unlikely for successful exec).
 exit $?
