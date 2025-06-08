@@ -1,6 +1,6 @@
 [project]
 name = "datamover"
-version = "0.9.0"
+version = "1.0.0"
 description = "Bitmover application to monitor CSV hash files and upload PCAP files to a remote NiFi server"
 readme = "README.md"
 authors = [
@@ -16,7 +16,7 @@ dependencies = [
 
 [project.scripts]
 bitmover = "datamover.bitmover:main" # Script name is 'bitmover'
-data_rx  = "datamover.data_rx:main" # Script name is 'data_rx'
+data_rx = "datamover.data_rx:main" # Script name is 'data_rx'
 make_pcaps = "datamover.make_pcaps:main" # Script name is 'make_pcaps'
 
 [build-system]
