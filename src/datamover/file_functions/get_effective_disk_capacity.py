@@ -2,45 +2,49 @@ import logging
 import shutil
 from pathlib import Path
 
-from datamover.startup_code.load_config import Config, ConfigError
-
 logger = logging.getLogger(__name__)
 
 
-def _detect_capacity(path: Path) -> int:
-    """Gets the total disk capacity for a given path."""
-    try:
-        stats = shutil.disk_usage(path)
-    # Handle cases where the path doesn't exist, or we lack permissions.
-    except (FileNotFoundError, OSError) as e:
-        # Re-raise as a ValueError to be handled by the calling function.
-        raise ValueError(f"Cannot access disk stats for {path!r}") from e
+class DiskCapacityError(ValueError):  # Custom exception for clarity
+    """Raised when disk capacity cannot be determined or is invalid."""
+    pass
 
-    if stats.total <= 0:
-        raise ValueError(f"Detected non-positive capacity ({stats.total}) for path {path!r}")
-    return stats.total
 
-def get_effective_disk_capacity(cfg: Config) -> int:
+def get_disk_capacity_for_path(path: Path) -> int:
     """
-    Determine total disk capacity for the configured base directory.
+    Gets the total disk capacity for the filesystem containing the given path.
+
+    Args:
+        path: A Path object on the filesystem whose capacity is to be determined.
+
+    Returns:
+        The total disk capacity in bytes.
 
     Raises:
-        ConfigError: If the base directory does not exist or if its disk
-                     capacity cannot be determined.
+        DiskCapacityError: If disk stats cannot be accessed, or if the
+                           detected capacity is non-positive.
     """
-    base_dir = Path(cfg.base_dir)
-    logger.info("Checking disk at %r", base_dir)
+    if not isinstance(path, Path):
+        # This check is good practice, though type hints help catch it earlier.
+        raise TypeError(f"Expected a Path object for capacity detection, got {type(path)}.")
 
-    if not base_dir.exists():
-        raise ConfigError(f"Configured base_dir does not exist: {base_dir!r}")
-
+    logger.debug("Attempting to get disk usage for path: %s", path)
     try:
-        detected = _detect_capacity(base_dir)
-        logger.info("Detected capacity: %d bytes", detected)
-        return detected
-    # Only catch the specific error we expect from our helper.
-    except ValueError as err:
-        # Chain the exception to preserve the original traceback for debugging.
-        raise ConfigError(
-            f"Could not determine disk capacity for {base_dir!r}. See cause above."
-        ) from err
+        stats = shutil.disk_usage(path)
+    except (FileNotFoundError, PermissionError, OSError) as e:
+        logger.error("Failed to get disk usage for '%s': %s", path, e)
+        raise DiskCapacityError(
+            f"Cannot determine disk capacity for {path!r}. OS error: {e}"
+        ) from e
+
+    if stats.total <= 0:
+        logger.error(
+            "Detected non-positive disk capacity (%d) for path '%s'", stats.total, path
+        )
+        raise DiskCapacityError(
+            f"Detected non-positive capacity ({stats.total}) for path {path!r}"
+        )
+
+    logger.debug("Successfully determined disk capacity for '%s': %d bytes", path, stats.total)
+
+    return stats.total

@@ -1,61 +1,60 @@
-# datamover/purger/thread_factory.py
 import logging
 import threading
 from pathlib import Path
 from typing import Optional
 
 from datamover.file_functions.fs_mock import FS
-from datamover.purger.purger_thread import PurgerThread  # Import the new PurgerThread
+from datamover.file_functions.get_effective_disk_capacity import get_disk_capacity_for_path
+from datamover.purger.purger_thread import PurgerThread
 
 logger = logging.getLogger(__name__)
 
 
 def create_purger_thread(
-    *,
-    work_dir_path: Path,
-    uploaded_dir_path: Path,
-    fs: FS,
-    total_disk_capacity_bytes: int,
-    target_disk_usage_percent: float,
-    check_interval_seconds: float,
-    stop_event: threading.Event,
-    thread_name: Optional[str] = "PurgerThread",
+        *,
+        work_dir_path: Path,
+        uploaded_dir_path: Path,  # Used for capacity detection if configured_capacity is 0
+        fs: FS,
+        total_disk_capacity_bytes: int,
+        target_disk_usage_percent: float,
+        check_interval_seconds: float,
+        stop_event: threading.Event,
+        thread_name: Optional[str] = "PurgerThread",
 ) -> PurgerThread:
     """
-    Constructs a PurgerThread that periodically calls manage_disk_space.
+    Constructs a PurgerThread.
+    If configured_total_disk_capacity_bytes is 0, capacity is auto-detected
+    using 'uploaded_dir_path'.
 
-    Args:
-        work_dir_path: Path to the directory where new files are staged (e.g., config.worker_dir).
-        uploaded_dir_path: Path to the directory where uploaded files are moved (e.g., config.uploaded_dir).
-        fs: Filesystem abstraction instance.
-        total_disk_capacity_bytes: Total capacity of the disk being monitored, in bytes.
-        target_disk_usage_percent: The target disk usage (e.g., 0.80 for 80%).
-        check_interval_seconds: How often the purger thread should run its check.
-        stop_event: Shared threading.Event to signal thread shutdown.
-        thread_name: Optional name for the thread.
-
-    Returns:
-        A configured PurgerThread instance (daemon, not yet started).
+    Raises:
+        ValueError: For invalid configuration parameters not caught by Config loading.
+        DiskCapacityError: If auto-detection of disk capacity fails (propagated from
+                           get_disk_capacity_for_path). This will typically lead to
+                           an AppSetupError in the main app.
     """
-    # Basic validation (can be expanded if necessary)
-    if not isinstance(work_dir_path, Path) or not isinstance(uploaded_dir_path, Path):
-        raise TypeError("work_dir_path and uploaded_dir_path must be Path objects.")
-    if not isinstance(fs, FS):
-        raise TypeError("fs must be an FS instance.")
-    if total_disk_capacity_bytes < 0:
-        raise ValueError("total_disk_capacity_bytes cannot be negative.")
-    if not (0.0 < target_disk_usage_percent <= 1.0):
+    final_total_disk_capacity_bytes: int
+
+    if total_disk_capacity_bytes == 0:
+        logger.info(
+            "Configured total_disk_capacity_bytes is 0. Attempting auto-detection using path: %s",
+            uploaded_dir_path,
+        )
+        final_total_disk_capacity_bytes = get_disk_capacity_for_path(uploaded_dir_path)
+    elif total_disk_capacity_bytes > 0:
+        final_total_disk_capacity_bytes = total_disk_capacity_bytes
+    else:
+        # Should be caught by Config validation, but safeguard.
         raise ValueError(
-            "target_disk_usage_percent must be between 0.0 (exclusive) and 1.0 (inclusive)."
+            f"Invalid configured_total_disk_capacity_bytes: {total_disk_capacity_bytes}. Must be >= 0."
         )
 
     logger.info(
-        "Creating %s: Configured for WorkDir='%s', UploadedDir='%s'. Target usage < %.0f%% of %s bytes. CheckInterval=%.1fs.",
+        "Creating %s: WorkDir='%s', UploadedDir='%s'. Target usage < %.0f%% of %s bytes. CheckInterval=%.1fs.",
         thread_name,
         work_dir_path,
         uploaded_dir_path,
         target_disk_usage_percent * 100,
-        f"{total_disk_capacity_bytes:,}",
+        f"{final_total_disk_capacity_bytes:,}",
         check_interval_seconds,
     )
 
@@ -63,7 +62,7 @@ def create_purger_thread(
         work_dir_path=work_dir_path,
         uploaded_dir_path=uploaded_dir_path,
         fs=fs,
-        total_disk_capacity_bytes=total_disk_capacity_bytes,
+        total_disk_capacity_bytes=final_total_disk_capacity_bytes,
         target_disk_usage_percent=target_disk_usage_percent,
         check_interval_seconds=check_interval_seconds,
         stop_event=stop_event,
