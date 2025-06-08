@@ -52,7 +52,7 @@ def _initialize_queues() -> dict[str, queue.Queue]:
 
 
 def _define_thread_factory_specs(
-    context: AppContext, queues: dict[str, queue.Queue]
+        context: AppContext, queues: dict[str, queue.Queue]
 ) -> list[dict[str, Any]]:
     cfg = context.config
     return [
@@ -133,12 +133,9 @@ def _define_thread_factory_specs(
                 "work_dir_path": cfg.worker_dir,
                 "uploaded_dir_path": cfg.uploaded_dir,
                 "fs": context.fs,
-                # "total_disk_capacity_bytes": cfg.purger_total_disk_capacity_bytes,
-                # "target_disk_usage_percent": cfg.purger_target_disk_usage_percent,
-                # "check_interval_seconds": cfg.purger_check_interval_seconds,
-                "total_disk_capacity_bytes": 1024 * 1024 * 1024 * 1024,  # Example: 1 GiB for testing
-                "target_disk_usage_percent": 0.8,
-                "check_interval_seconds": 60.0,
+                "total_disk_capacity_bytes": cfg.total_disk_capacity_bytes,
+                "target_disk_usage_percent": cfg.target_disk_usage_percent,
+                "check_interval_seconds": cfg.purger_poll_interval_seconds,
                 "stop_event": context.shutdown_event,
             },
         },
@@ -174,8 +171,8 @@ def _build_components(specs: list[dict[str, Any]]) -> tuple[dict[str, Any], list
 
 
 def _start_components(
-    components: dict[str, Any],
-    shutdown_event: threading.Event,
+        components: dict[str, Any],
+        shutdown_event: threading.Event,
 ) -> None:
     started: list[Any] = []
     current_key: str = "<none_yet_started>"
@@ -214,9 +211,9 @@ def _start_components(
 
 
 def _stop_and_join_components(
-    components: dict[str, Any],
-    to_join: list[Any],
-    shutdown_event: threading.Event,
+        components: dict[str, Any],
+        to_join: list[Any],
+        shutdown_event: threading.Event,
 ) -> None:
     shutdown_event.set()
 

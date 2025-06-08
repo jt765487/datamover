@@ -41,6 +41,17 @@ stuck_active_file_timeout_seconds = 61.0
 # How often (in seconds) to check the exit - leave at the default of 0.5 seconds.
 event_queue_poll_timeout_seconds = 0.5
 
+[Purger]
+# How often (in seconds) to check the disk size - highly recommended that this is left at 600 seconds
+purger_poll_interval_seconds = 600
+
+# Free size of data disk - highly recommended that this is left at 0.75 (75%)
+target_disk_usage_percent = 0.75
+
+# Disk capacity - in GB. In operation set this to 0 to allow for auto size detection
+# total_disk_capacity_bytes = 104857600  # Example: 100MB for testing
+total_disk_capacity_bytes = 0  # Set to zero to auto detect disk size
+
 [Uploader]
 # How often (in seconds) to check the queue for files to upload from the worker directory.
 uploader_poll_interval_seconds = 0.5

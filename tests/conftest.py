@@ -129,7 +129,7 @@ def default_real_test_config(standard_test_dirs: StandardTestDirs) -> Config:
 
 @pytest.fixture
 def mock_config(
-    standard_test_dirs: StandardTestDirs,
+        standard_test_dirs: StandardTestDirs,
 ) -> MagicMock:  # Now uses standard_test_dirs
     """
     Provides a MagicMock object that mimics the application's Config structure.
@@ -172,6 +172,11 @@ def mock_config(
 
     # [Tailer]
     cfg.event_queue_poll_timeout_seconds = 1.0
+
+    # [Purger]
+    cfg.purger_poll_interval_seconds = 600.0
+    cfg.target_disk_usage_percent = 0.75
+    cfg.total_disk_capacity_bytes = 0  # Or a large number like 10 * 1024**3
 
     # [Uploader]
     cfg.uploader_poll_interval_seconds = 0.5
@@ -276,11 +281,11 @@ def mock_fs_for_sender_unit_tests(mock_fs: MagicMock) -> MagicMock:
 
 @pytest.fixture
 def retryable_sender_unit_test_deps(  # Renamed from 'sender' for clarity
-    mock_config: MagicMock,  # Uses the MagicMock version of Config
-    mock_http_client: MagicMock,
-    mock_fs_for_sender_unit_tests: MagicMock,  # Uses the specialized fs mock
-    mock_stop_event: MagicMock,
-    mock_safe_file_mover: MagicMock,
+        mock_config: MagicMock,  # Uses the MagicMock version of Config
+        mock_http_client: MagicMock,
+        mock_fs_for_sender_unit_tests: MagicMock,  # Uses the specialized fs mock
+        mock_stop_event: MagicMock,
+        mock_safe_file_mover: MagicMock,
 ) -> dict[str, Any]:
     """
     Provides a dictionary of mocked dependencies needed to instantiate
@@ -317,7 +322,7 @@ def base_dir_legacy(tmp_path: Path) -> Path:
         "Fixture 'base_dir_legacy' is deprecated. Consider using 'standard_test_dirs'."
     )
     app_base = (
-        tmp_path / "app_legacy_base"
+            tmp_path / "app_legacy_base"
     )  # Renamed to avoid conflict if used alongside standard
     app_base.mkdir(parents=True, exist_ok=True)
     return app_base

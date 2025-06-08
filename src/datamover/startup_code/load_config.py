@@ -47,6 +47,11 @@ class Config:
     # From [Tailer]
     event_queue_poll_timeout_seconds: float
 
+    # From [Purger]
+    purger_poll_interval_seconds: float
+    target_disk_usage_percent: float
+    total_disk_capacity_bytes: int  # Can be 0 for auto-detection
+
     # From [Uploader]
     uploader_poll_interval_seconds: float
     heartbeat_target_interval_s: float
@@ -68,7 +73,7 @@ class Config:
 
 # Helper functions for parsing options
 def _get_string_option(
-    cp: ConfigParser, section: str, option: str, allow_empty: bool = False
+        cp: ConfigParser, section: str, option: str, allow_empty: bool = False
 ) -> str:
     if not cp.has_option(section, option):
         raise ConfigError(f"[{section}] missing option '{option}'")
@@ -79,11 +84,11 @@ def _get_string_option(
 
 
 def _get_int_option(
-    cp: ConfigParser,
-    section: str,
-    option: str,
-    min_value: Optional[int] = None,
-    max_value: Optional[int] = None,
+        cp: ConfigParser,
+        section: str,
+        option: str,
+        min_value: Optional[int] = None,
+        max_value: Optional[int] = None,
 ) -> int:
     if not cp.has_option(section, option):
         raise ConfigError(f"[{section}] missing option '{option}'")
@@ -104,11 +109,11 @@ def _get_int_option(
 
 
 def _get_float_option(
-    cp: ConfigParser,
-    section: str,
-    option: str,
-    min_value: Optional[float] = None,
-    max_value: Optional[float] = None,
+        cp: ConfigParser,
+        section: str,
+        option: str,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
 ) -> float:
     if not cp.has_option(section, option):
         raise ConfigError(f"[{section}] missing option '{option}'")
@@ -141,7 +146,7 @@ def _get_boolean_option(cp: ConfigParser, section: str, option: str) -> bool:
 
 
 def _parse_directories_config(
-    cp: ConfigParser, fs: FS
+        cp: ConfigParser, fs: FS
 ) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     # Base directory
     base_dir_str = _get_string_option(cp, "Directories", "base_dir")
@@ -207,7 +212,7 @@ def _parse_mover_config(cp: ConfigParser) -> float:
 
 
 def _parse_scanner_config(
-    cp: ConfigParser,
+        cp: ConfigParser,
 ) -> tuple[float, float, float]:  # Return types changed to float
     scan_check_s = _get_float_option(
         cp, "Scanner", "scanner_check_seconds", min_value=1.0
@@ -228,8 +233,22 @@ def _parse_tailer_config(cp: ConfigParser) -> float:
     return poll_timeout
 
 
+def _parse_purger_config(cp: ConfigParser) -> tuple[float, float, int]:
+    poll_interval = _get_float_option(
+        cp, "Purger", "purger_poll_interval_seconds", min_value=0.0
+    )
+    target_usage = _get_float_option(
+        cp, "Purger", "target_disk_usage_percent", min_value=0.0, max_value=1.0
+    )
+    # min_value=0 allows for the auto-detection case.
+    total_capacity_bytes = _get_int_option(
+        cp, "Purger", "total_disk_capacity_bytes", min_value=0
+    )
+    return poll_interval, target_usage, total_capacity_bytes
+
+
 def _parse_uploader_config(
-    cp: ConfigParser,
+        cp: ConfigParser,
 ) -> tuple[
     float, float, str, float, bool, float, float
 ]:  # Return types changed for timeout/backoff
@@ -296,6 +315,7 @@ def load_config(path: Union[str, Path], fs: FS = FS()) -> Config:
         "Mover",
         "Scanner",
         "Tailer",
+        "Purger",
         "Uploader",
     )
     for section in required_sections:
@@ -306,13 +326,10 @@ def load_config(path: Union[str, Path], fs: FS = FS()) -> Config:
         base_d, logger_d, source_d, worker_d, uploaded_d, dead_letter_d, csv_d = (
             _parse_directories_config(cp, fs)
         )
-
         pcap_ext, csv_ext = _parse_files_section_config(cp)
         move_poll = _parse_mover_config(cp)
-        # Types of scan_check, lost_timeout, stuck_active are now float
         scan_check, lost_timeout, stuck_active = _parse_scanner_config(cp)
         event_queue_poll = _parse_tailer_config(cp)
-        # Types of req_timeout_val, initial_backoff_val, max_backoff_val are now float
         (
             uploader_poll,
             heartbeat,
@@ -322,6 +339,12 @@ def load_config(path: Union[str, Path], fs: FS = FS()) -> Config:
             initial_backoff_val,
             max_backoff_val,
         ) = _parse_uploader_config(cp)
+
+        (
+            purger_poll_val,
+            target_disk_usage_val,
+            total_disk_capacity_val,
+        ) = _parse_purger_config(cp)
 
     except ConfigError:
         raise
@@ -355,6 +378,9 @@ def load_config(path: Union[str, Path], fs: FS = FS()) -> Config:
             verify_ssl=verify_ssl_val,
             initial_backoff=initial_backoff_val,
             max_backoff=max_backoff_val,
+            purger_poll_interval_seconds=purger_poll_val,
+            target_disk_usage_percent=target_disk_usage_val,
+            total_disk_capacity_bytes=total_disk_capacity_val,
         )
     except ConfigError:  # Catches errors from __post_init__
         raise

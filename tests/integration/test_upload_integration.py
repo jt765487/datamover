@@ -11,9 +11,6 @@ from unittest.mock import MagicMock
 import pytest
 import requests  # For requests.exceptions
 
-# --- Shared Test Utils ---
-from tests.test_utils.fs_helpers import create_and_stamp_real_fs
-
 # --- Application Imports ---
 from datamover.file_functions.fs_mock import FS
 from datamover.protocols import HttpClient, HttpResponse
@@ -24,6 +21,8 @@ from datamover.uploader.thread_factory import (
     SenderConnectionConfig,
 )
 from datamover.uploader.uploader_thread import UploaderThread
+# --- Shared Test Utils ---
+from tests.test_utils.fs_helpers import create_and_stamp_real_fs
 
 # Module-level logger for this test file
 logger = logging.getLogger(__name__)
@@ -95,6 +94,9 @@ def integration_real_config(uploader_test_dirs: UploaderTestDirs) -> Config:
         remote_host_url="http://test.uploader.api/upload_endpoint",  # Renamed from remote_url
         request_timeout=2,
         verify_ssl=False,
+        purger_poll_interval_seconds=3600.0,
+        target_disk_usage_percent=0.75,
+        total_disk_capacity_bytes=10 * 1024 ** 3,  # 10 GiB
     )
     logger.debug(f"Created real Config for integration test: {cfg}")
     return cfg
@@ -108,7 +110,7 @@ def mock_http_client_integration() -> MagicMock:
 
 
 def create_simulated_http_response(
-    status_code: int, text: str = "", headers: dict = None
+        status_code: int, text: str = "", headers: dict = None
 ) -> MagicMock:
     response = MagicMock(spec=HttpResponse)
     response.status_code = status_code
@@ -119,17 +121,17 @@ def create_simulated_http_response(
 
 @pytest.fixture
 def uploader_test_runner_integration(
-    real_fs: FS,  # Assumed from conftest.py
-    integration_real_config: Config,  # Uses the new real config fixture
-    mock_http_client_integration: MagicMock,
+        real_fs: FS,  # Assumed from conftest.py
+        integration_real_config: Config,  # Uses the new real config fixture
+        mock_http_client_integration: MagicMock,
 ):
     created_threads: list[UploaderThread] = []
 
     def _setup_and_run_uploader(
-        files_to_create_in_worker: dict[str, dict[str, Any]],
-        http_post_side_effect: Any,
-        file_extension: str = DEFAULT_TEST_FILE_EXTENSION,
-        poll_interval: float = UPLOADER_POLL_INTERVAL,
+            files_to_create_in_worker: dict[str, dict[str, Any]],
+            http_post_side_effect: Any,
+            file_extension: str = DEFAULT_TEST_FILE_EXTENSION,
+            poll_interval: float = UPLOADER_POLL_INTERVAL,
     ):
         worker_dir = integration_real_config.worker_dir
 
@@ -213,7 +215,7 @@ def uploader_test_runner_integration(
 
     logger.debug("TestRunner: Starting teardown of UploaderThread test runner.")
     for thread_idx, thread_to_stop in enumerate(
-        created_threads
+            created_threads
     ):  # Renamed 'thread' to 'thread_to_stop'
         if thread_to_stop.is_alive():
             logger.warning(
@@ -236,34 +238,34 @@ class TestUploaderIntegration:
         "http_responses_for_post, expected_post_calls, target_dir_attr_name, expected_sender_log_substr",
         [
             (
-                [create_simulated_http_response(200)],
-                1,
-                "uploaded_dir",
-                "Upload SUCCESS for",
+                    [create_simulated_http_response(200)],
+                    1,
+                    "uploaded_dir",
+                    "Upload SUCCESS for",
             ),
             (
-                [create_simulated_http_response(400)],
-                1,
-                "dead_letter_dir",
-                "Moving to DEAD LETTER",
+                    [create_simulated_http_response(400)],
+                    1,
+                    "dead_letter_dir",
+                    "Moving to DEAD LETTER",
             ),
             (
-                [
-                    create_simulated_http_response(503),
-                    create_simulated_http_response(200),
-                ],
-                2,
-                "uploaded_dir",
-                "Upload SUCCESS for",
+                    [
+                        create_simulated_http_response(503),
+                        create_simulated_http_response(200),
+                    ],
+                    2,
+                    "uploaded_dir",
+                    "Upload SUCCESS for",
             ),
             (
-                [
-                    requests.exceptions.Timeout("simulated timeout"),
-                    create_simulated_http_response(403),
-                ],
-                2,
-                "dead_letter_dir",
-                "Moving to DEAD LETTER",
+                    [
+                        requests.exceptions.Timeout("simulated timeout"),
+                        create_simulated_http_response(403),
+                    ],
+                    2,
+                    "dead_letter_dir",
+                    "Moving to DEAD LETTER",
             ),
         ],
         ids=[
@@ -274,18 +276,18 @@ class TestUploaderIntegration:
         ],
     )
     def test_integration_single_file_outcomes(
-        self,
-        # Pytest test methods in a class still take self by convention, though not strictly needed if not used
-        uploader_test_runner_integration: Callable,
-        integration_real_config: Config,  # Changed from integration_config
-        real_fs: FS,
-        mock_http_client_integration: MagicMock,
-        caplog: pytest.LogCaptureFixture,
-        http_responses_for_post: Any,
-        expected_post_calls: int,
-        target_dir_attr_name: str,
-        expected_sender_log_substr: str,
-        request: pytest.FixtureRequest,
+            self,
+            # Pytest test methods in a class still take self by convention, though not strictly needed if not used
+            uploader_test_runner_integration: Callable,
+            integration_real_config: Config,  # Changed from integration_config
+            real_fs: FS,
+            mock_http_client_integration: MagicMock,
+            caplog: pytest.LogCaptureFixture,
+            http_responses_for_post: Any,
+            expected_post_calls: int,
+            target_dir_attr_name: str,
+            expected_sender_log_substr: str,
+            request: pytest.FixtureRequest,
     ):
         test_logger = logging.getLogger(f"{request.node.nodeid}")
         caplog.set_level(logging.DEBUG)
@@ -341,14 +343,14 @@ class TestUploaderIntegration:
         test_logger.info("Test Finished Successfully.")
 
     def test_integration_move_to_done_failure_is_critical(
-        self,
-        uploader_test_runner_integration: Callable,
-        integration_real_config: Config,  # Changed
-        real_fs: FS,
-        mock_http_client_integration: MagicMock,
-        caplog: pytest.LogCaptureFixture,
-        mocker: MagicMock,
-        request: pytest.FixtureRequest,
+            self,
+            uploader_test_runner_integration: Callable,
+            integration_real_config: Config,  # Changed
+            real_fs: FS,
+            mock_http_client_integration: MagicMock,
+            caplog: pytest.LogCaptureFixture,
+            mocker: MagicMock,
+            request: pytest.FixtureRequest,
     ):
         test_logger = logging.getLogger(f"{request.node.nodeid}")
         caplog.set_level(logging.DEBUG)
@@ -402,13 +404,13 @@ class TestUploaderIntegration:
         test_logger.info("Test Finished Successfully.")
 
     def test_integration_mixed_batch_outcomes(
-        self,
-        uploader_test_runner_integration: Callable,
-        integration_real_config: Config,  # Changed
-        real_fs: FS,
-        mock_http_client_integration: MagicMock,
-        caplog: pytest.LogCaptureFixture,
-        request: pytest.FixtureRequest,
+            self,
+            uploader_test_runner_integration: Callable,
+            integration_real_config: Config,  # Changed
+            real_fs: FS,
+            mock_http_client_integration: MagicMock,
+            caplog: pytest.LogCaptureFixture,
+            request: pytest.FixtureRequest,
     ):
         test_logger = logging.getLogger(f"{request.node.nodeid}")
         caplog.set_level(logging.DEBUG)
@@ -424,7 +426,7 @@ class TestUploaderIntegration:
         side_effect_state = {"attempts_C": 0}
 
         def http_post_router_side_effect(
-            url: str, data: Any, headers: dict, timeout: float, verify: bool
+                url: str, data: Any, headers: dict, timeout: float, verify: bool
         ):
             filename_from_header = headers.get("x-filename")
             test_logger.debug(f"HTTP_POST_ROUTER: Call for {filename_from_header}")
@@ -487,12 +489,12 @@ class TestUploaderIntegration:
         test_logger.info("Test Finished Successfully.")
 
     def test_integration_empty_worker_directory_no_action(
-        self,
-        uploader_test_runner_integration: Callable,
-        # integration_real_config: Config, # Not strictly needed if not asserting paths
-        mock_http_client_integration: MagicMock,
-        caplog: pytest.LogCaptureFixture,
-        request: pytest.FixtureRequest,
+            self,
+            uploader_test_runner_integration: Callable,
+            # integration_real_config: Config, # Not strictly needed if not asserting paths
+            mock_http_client_integration: MagicMock,
+            caplog: pytest.LogCaptureFixture,
+            request: pytest.FixtureRequest,
     ):
         test_logger = logging.getLogger(f"{request.node.nodeid}")
         caplog.set_level(logging.DEBUG)
@@ -530,14 +532,14 @@ class TestUploaderIntegration:
         test_logger.info("Test Finished Successfully.")
 
     def test_integration_file_disappears_before_send(
-        self,
-        uploader_test_runner_integration: Callable,
-        integration_real_config: Config,  # Changed
-        real_fs: FS,
-        mock_http_client_integration: MagicMock,
-        caplog: pytest.LogCaptureFixture,
-        request: pytest.FixtureRequest,
-        mocker: MagicMock,
+            self,
+            uploader_test_runner_integration: Callable,
+            integration_real_config: Config,  # Changed
+            real_fs: FS,
+            mock_http_client_integration: MagicMock,
+            caplog: pytest.LogCaptureFixture,
+            request: pytest.FixtureRequest,
+            mocker: MagicMock,
     ):
         test_logger = logging.getLogger(f"{request.node.nodeid}")
         caplog.set_level(logging.DEBUG)
@@ -610,14 +612,14 @@ class TestUploaderIntegration:
         test_logger.info("Test Finished Successfully.")
 
     def test_integration_sender_critical_failure_handling(
-        self,
-        uploader_test_runner_integration: Callable,
-        integration_real_config: Config,  # Changed
-        real_fs: FS,
-        mock_http_client_integration: MagicMock,
-        caplog: pytest.LogCaptureFixture,
-        mocker: MagicMock,
-        request: pytest.FixtureRequest,
+            self,
+            uploader_test_runner_integration: Callable,
+            integration_real_config: Config,  # Changed
+            real_fs: FS,
+            mock_http_client_integration: MagicMock,
+            caplog: pytest.LogCaptureFixture,
+            mocker: MagicMock,
+            request: pytest.FixtureRequest,
     ):
         test_logger = logging.getLogger(f"{request.node.nodeid}")
         caplog.set_level(logging.DEBUG)
