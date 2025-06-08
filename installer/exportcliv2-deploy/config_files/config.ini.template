@@ -49,7 +49,7 @@ purger_poll_interval_seconds = 600
 target_disk_usage_percent = 0.75
 
 # Disk capacity - in GB. In operation set this to 0 to allow for auto size detection
-# total_disk_capacity_bytes = 100000000
+# total_disk_capacity_bytes = 100000001
 total_disk_capacity_bytes = 0
 
 [Uploader]
