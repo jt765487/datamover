@@ -72,7 +72,9 @@ class PurgerThread(threading.Thread):
                     e,
                 )
                 if not self.stop_event.is_set():
-                    self.stop_event.wait(timeout=min(self.check_interval_seconds / 2, 5.0)) # Shorter for error recovery
+                    self.stop_event.wait(
+                        timeout=min(self.check_interval_seconds / 2, 5.0)
+                    )  # Shorter for error recovery
 
             if (
                 self.stop_event.is_set()

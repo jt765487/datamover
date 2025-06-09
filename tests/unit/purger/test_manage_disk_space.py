@@ -185,11 +185,10 @@ class TestManageDiskSpace:
             target_bytes_to_keep=0,  # Expecting to delete all 1500 from uploaded
         )
         assert (
-            f"Need to delete at least 1500 bytes overall to reach target."
-            in caplog.text
+            "Need to delete at least 1500 bytes overall to reach target." in caplog.text
         )
-        assert f"Total bytes actually deleted in this session: 1500." in caplog.text
-        assert f"Successfully brought disk usage to target or below." in caplog.text
+        assert "Total bytes actually deleted in this session: 1500." in caplog.text
+        assert "Successfully brought disk usage to target or below." in caplog.text
         # Check final estimated usage
         final_estimated = 3500 - 1500  # 2000
         final_percent = (final_estimated / total_disk_cap) * 100  # 50.0%
@@ -267,11 +266,10 @@ class TestManageDiskSpace:
 
         mock_process.assert_has_calls([expected_uploaded_call, expected_work_call])
         assert (
-            f"Need to delete at least 1700 bytes overall to reach target."
-            in caplog.text
+            "Need to delete at least 1700 bytes overall to reach target." in caplog.text
         )
         assert (
-            f"Still need to delete 700 bytes. Processing work directory." in caplog.text
+            "Still need to delete 700 bytes. Processing work directory." in caplog.text
         )
         total_deleted_session = (
             bytes_deleted_from_uploaded + bytes_deleted_from_work
@@ -280,7 +278,7 @@ class TestManageDiskSpace:
             f"Total bytes actually deleted in this session: {total_deleted_session}."
             in caplog.text
         )
-        assert f"Successfully brought disk usage to target or below." in caplog.text
+        assert "Successfully brought disk usage to target or below." in caplog.text
 
         final_estimated = 3200 - total_deleted_session  # 3200 - 3000 = 200
         final_percent = (
@@ -335,7 +333,7 @@ class TestManageDiskSpace:
             directory_description="uploaded directory",
             target_bytes_to_keep=0,
         )
-        assert f"Successfully brought disk usage to target or below." in caplog.text
+        assert "Successfully brought disk usage to target or below." in caplog.text
 
         # Now, a case where even deleting everything doesn't meet target
         caplog.clear()
@@ -542,7 +540,7 @@ class TestManageDiskSpace:
         # bytes_still_needing_deletion = 500 - 0 = 500
         # work_files_sorted is empty
         assert (
-            f"Still need to delete 500 bytes, but no files available in work directory."
+            "Still need to delete 500 bytes, but no files available in work directory."
             in caplog.text
         )
         # Deficit check:
@@ -601,5 +599,5 @@ class TestManageDiskSpace:
             target_bytes_to_keep=500,
         )
         # bytes_still_needing_deletion = 500 - 1000 = -500. So no attempt to delete from work.
-        assert f"Total bytes actually deleted in this session: 1000." in caplog.text
-        assert f"Successfully brought disk usage to target or below." in caplog.text
+        assert "Total bytes actually deleted in this session: 1000." in caplog.text
+        assert "Successfully brought disk usage to target or below." in caplog.text

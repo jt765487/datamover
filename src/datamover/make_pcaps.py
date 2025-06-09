@@ -5,6 +5,7 @@ import logging
 import sys
 from datetime import datetime
 
+
 def create_pcap_files(instance_prefix, num_files, target_directory, file_size_bytes):
     """
     Creates N .pcap files named <instance>-<YYYYMMDD-HHMMSS>-<seq>.pcap,
@@ -36,7 +37,7 @@ def create_pcap_files(instance_prefix, num_files, target_directory, file_size_by
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
     # Pre-build one chunk of null bytes of size `file_size_bytes`
-    pcap_data = b'\x00' * file_size_bytes
+    pcap_data = b"\x00" * file_size_bytes
 
     total_bytes_written = 0
     GB = 1_000_000_000
@@ -77,7 +78,7 @@ def main():
     Entrypoint for the console script "make_pcaps".
     Parses command-line arguments and initiates the file creation process.
     """
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     parser = argparse.ArgumentParser(
         description=(
@@ -86,14 +87,25 @@ def main():
             "Reports progress every 1 GB."
         )
     )
-    parser.add_argument("-i", "--instance", required=True,
-                        help="Three-letter instance prefix (e.g., AAA)")
-    parser.add_argument("-n", "--number", type=int, required=True,
-                        help="How many files to create")
-    parser.add_argument("-d", "--directory", required=True,
-                        help="Target directory (must already exist)")
-    parser.add_argument("-s", "--size", type=int, default=100,
-                        help="Size of each .pcap file in bytes (default: 100)")
+    parser.add_argument(
+        "-i",
+        "--instance",
+        required=True,
+        help="Three-letter instance prefix (e.g., AAA)",
+    )
+    parser.add_argument(
+        "-n", "--number", type=int, required=True, help="How many files to create"
+    )
+    parser.add_argument(
+        "-d", "--directory", required=True, help="Target directory (must already exist)"
+    )
+    parser.add_argument(
+        "-s",
+        "--size",
+        type=int,
+        default=100,
+        help="Size of each .pcap file in bytes (default: 100)",
+    )
 
     args = parser.parse_args()
 
@@ -101,7 +113,7 @@ def main():
         instance_prefix=args.instance,
         num_files=args.number,
         target_directory=args.directory,
-        file_size_bytes=args.size
+        file_size_bytes=args.size,
     )
 
 

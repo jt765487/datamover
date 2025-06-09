@@ -129,7 +129,7 @@ def default_real_test_config(standard_test_dirs: StandardTestDirs) -> Config:
 
 @pytest.fixture
 def mock_config(
-        standard_test_dirs: StandardTestDirs,
+    standard_test_dirs: StandardTestDirs,
 ) -> MagicMock:  # Now uses standard_test_dirs
     """
     Provides a MagicMock object that mimics the application's Config structure.
@@ -281,11 +281,11 @@ def mock_fs_for_sender_unit_tests(mock_fs: MagicMock) -> MagicMock:
 
 @pytest.fixture
 def retryable_sender_unit_test_deps(  # Renamed from 'sender' for clarity
-        mock_config: MagicMock,  # Uses the MagicMock version of Config
-        mock_http_client: MagicMock,
-        mock_fs_for_sender_unit_tests: MagicMock,  # Uses the specialized fs mock
-        mock_stop_event: MagicMock,
-        mock_safe_file_mover: MagicMock,
+    mock_config: MagicMock,  # Uses the MagicMock version of Config
+    mock_http_client: MagicMock,
+    mock_fs_for_sender_unit_tests: MagicMock,  # Uses the specialized fs mock
+    mock_stop_event: MagicMock,
+    mock_safe_file_mover: MagicMock,
 ) -> dict[str, Any]:
     """
     Provides a dictionary of mocked dependencies needed to instantiate
@@ -322,7 +322,7 @@ def base_dir_legacy(tmp_path: Path) -> Path:
         "Fixture 'base_dir_legacy' is deprecated. Consider using 'standard_test_dirs'."
     )
     app_base = (
-            tmp_path / "app_legacy_base"
+        tmp_path / "app_legacy_base"
     )  # Renamed to avoid conflict if used alongside standard
     app_base.mkdir(parents=True, exist_ok=True)
     return app_base

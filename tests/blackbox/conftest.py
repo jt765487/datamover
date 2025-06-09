@@ -31,9 +31,9 @@ class BlackBoxTestEnv(NamedTuple):
 
 @pytest.fixture(scope="function")
 def app_test_env(
-        tmp_path: Path,
-        real_fs: FS,
-        httpserver: HTTPServer,
+    tmp_path: Path,
+    real_fs: FS,
+    httpserver: HTTPServer,
 ) -> Iterator[BlackBoxTestEnv]:  # <--- MODIFIED TYPE HINT
     # 1. Create Directories
     base_dir = tmp_path / "bb_app_root_live_hs"
@@ -84,7 +84,7 @@ def app_test_env(
         max_backoff=0.05,
         purger_poll_interval_seconds=3600.0,
         target_disk_usage_percent=0.75,
-        total_disk_capacity_bytes=10 * 1024 ** 3,
+        total_disk_capacity_bytes=10 * 1024**3,
     )
 
     app_context_obj = build_context(config=test_config, fs_override=real_fs)

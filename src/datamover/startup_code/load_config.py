@@ -73,7 +73,7 @@ class Config:
 
 # Helper functions for parsing options
 def _get_string_option(
-        cp: ConfigParser, section: str, option: str, allow_empty: bool = False
+    cp: ConfigParser, section: str, option: str, allow_empty: bool = False
 ) -> str:
     if not cp.has_option(section, option):
         raise ConfigError(f"[{section}] missing option '{option}'")
@@ -84,11 +84,11 @@ def _get_string_option(
 
 
 def _get_int_option(
-        cp: ConfigParser,
-        section: str,
-        option: str,
-        min_value: Optional[int] = None,
-        max_value: Optional[int] = None,
+    cp: ConfigParser,
+    section: str,
+    option: str,
+    min_value: Optional[int] = None,
+    max_value: Optional[int] = None,
 ) -> int:
     if not cp.has_option(section, option):
         raise ConfigError(f"[{section}] missing option '{option}'")
@@ -109,11 +109,11 @@ def _get_int_option(
 
 
 def _get_float_option(
-        cp: ConfigParser,
-        section: str,
-        option: str,
-        min_value: Optional[float] = None,
-        max_value: Optional[float] = None,
+    cp: ConfigParser,
+    section: str,
+    option: str,
+    min_value: Optional[float] = None,
+    max_value: Optional[float] = None,
 ) -> float:
     if not cp.has_option(section, option):
         raise ConfigError(f"[{section}] missing option '{option}'")
@@ -146,7 +146,7 @@ def _get_boolean_option(cp: ConfigParser, section: str, option: str) -> bool:
 
 
 def _parse_directories_config(
-        cp: ConfigParser, fs: FS
+    cp: ConfigParser, fs: FS
 ) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     # Base directory
     base_dir_str = _get_string_option(cp, "Directories", "base_dir")
@@ -212,7 +212,7 @@ def _parse_mover_config(cp: ConfigParser) -> float:
 
 
 def _parse_scanner_config(
-        cp: ConfigParser,
+    cp: ConfigParser,
 ) -> tuple[float, float, float]:  # Return types changed to float
     scan_check_s = _get_float_option(
         cp, "Scanner", "scanner_check_seconds", min_value=1.0
@@ -248,7 +248,7 @@ def _parse_purger_config(cp: ConfigParser) -> tuple[float, float, int]:
 
 
 def _parse_uploader_config(
-        cp: ConfigParser,
+    cp: ConfigParser,
 ) -> tuple[
     float, float, str, float, bool, float, float
 ]:  # Return types changed for timeout/backoff

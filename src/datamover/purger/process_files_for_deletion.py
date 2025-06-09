@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from typing import List
 
 from datamover.file_functions.fs_mock import FS
@@ -7,6 +8,17 @@ from datamover.file_functions.safe_delete import safe_delete, DeleteValidationEr
 from datamover.purger.select_files_to_delete import select_files_to_delete
 
 logger = logging.getLogger(__name__)
+
+
+def _format_size_human_readable(size_bytes: int) -> str:
+    """Converts a size in bytes to a human-readable string (KB, MB, GB, etc.)."""
+    if size_bytes < 1024:
+        return f"{size_bytes} bytes"
+    for unit in ["KB", "MB", "GB", "TB"]:
+        size_bytes /= 1024
+        if size_bytes < 1024:
+            return f"{size_bytes:.2f} {unit}"
+    return f"{size_bytes:.2f} PB"
 
 
 def process_files_for_deletion(
@@ -35,9 +47,19 @@ def process_files_for_deletion(
     for file_entry in files_to_delete:
         try:
             safe_delete(file_entry.path, fs)
-            logger.info(
-                f"Successfully deleted: {file_entry.path} (freed: {file_entry.size} bytes) from {directory_description}."
+
+            # Format the size and modification time for the log message
+            readable_size = _format_size_human_readable(file_entry.size)
+            readable_mtime = datetime.fromtimestamp(file_entry.mtime).strftime(
+                "%Y-%m-%d %H:%M:%S"
             )
+
+            logger.info(
+                f"Successfully deleted: {file_entry.path} "
+                f"(size: {readable_size}, mtime: {readable_mtime}) "
+                f"from {directory_description}."
+            )
+
             bytes_actually_deleted += file_entry.size
         except DeleteValidationError as e:
             logger.warning(

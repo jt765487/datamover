@@ -26,7 +26,7 @@ class FileMoverTestEnv(NamedTuple):
 
 @pytest.fixture
 def file_mover_test_env(
-        tmp_path: Path, real_fs: FS, request: pytest.FixtureRequest
+    tmp_path: Path, real_fs: FS, request: pytest.FixtureRequest
 ) -> FileMoverTestEnv:
     """
     Sets up a self-contained test environment for FileMoveThread integration tests
@@ -87,7 +87,7 @@ def file_mover_test_env(
         max_backoff=1.0,
         purger_poll_interval_seconds=3600.0,
         target_disk_usage_percent=0.75,
-        total_disk_capacity_bytes=10 * 1024 ** 3,  # 10 GiB
+        total_disk_capacity_bytes=10 * 1024**3,  # 10 GiB
     )
 
     stop_event = threading.Event()
@@ -115,10 +115,10 @@ class TestFileMoverIntegration:
     """
 
     def test_file_is_moved_successfully(
-            self,
-            file_mover_test_env: FileMoverTestEnv,
-            caplog: pytest.LogCaptureFixture,
-            request: pytest.FixtureRequest,
+        self,
+        file_mover_test_env: FileMoverTestEnv,
+        caplog: pytest.LogCaptureFixture,
+        request: pytest.FixtureRequest,
     ):
         """
         Tests the happy path: a file path placed on the source queue is
@@ -219,10 +219,10 @@ class TestFileMoverIntegration:
 
     @pytest.mark.integration
     def test_thread_exits_quickly_if_stop_event_pre_set(
-            self,
-            file_mover_test_env: FileMoverTestEnv,
-            caplog: pytest.LogCaptureFixture,  # caplog might not be strictly needed if not asserting logs
-            request: pytest.FixtureRequest,
+        self,
+        file_mover_test_env: FileMoverTestEnv,
+        caplog: pytest.LogCaptureFixture,  # caplog might not be strictly needed if not asserting logs
+        request: pytest.FixtureRequest,
     ):
         """
         Tests that the FileMoveThread exits quickly without processing an item

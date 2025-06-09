@@ -52,7 +52,7 @@ def _initialize_queues() -> dict[str, queue.Queue]:
 
 
 def _define_thread_factory_specs(
-        context: AppContext, queues: dict[str, queue.Queue]
+    context: AppContext, queues: dict[str, queue.Queue]
 ) -> list[dict[str, Any]]:
     cfg = context.config
     return [
@@ -171,8 +171,8 @@ def _build_components(specs: list[dict[str, Any]]) -> tuple[dict[str, Any], list
 
 
 def _start_components(
-        components: dict[str, Any],
-        shutdown_event: threading.Event,
+    components: dict[str, Any],
+    shutdown_event: threading.Event,
 ) -> None:
     started: list[Any] = []
     current_key: str = "<none_yet_started>"
@@ -211,9 +211,9 @@ def _start_components(
 
 
 def _stop_and_join_components(
-        components: dict[str, Any],
-        to_join: list[Any],
-        shutdown_event: threading.Event,
+    components: dict[str, Any],
+    to_join: list[Any],
+    shutdown_event: threading.Event,
 ) -> None:
     shutdown_event.set()
 

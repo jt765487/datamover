@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 class DiskCapacityError(ValueError):  # Custom exception for clarity
     """Raised when disk capacity cannot be determined or is invalid."""
+
     pass
 
 
@@ -26,7 +27,9 @@ def get_disk_capacity_for_path(path: Path) -> int:
     """
     if not isinstance(path, Path):
         # This check is good practice, though type hints help catch it earlier.
-        raise TypeError(f"Expected a Path object for capacity detection, got {type(path)}.")
+        raise TypeError(
+            f"Expected a Path object for capacity detection, got {type(path)}."
+        )
 
     logger.debug("Attempting to get disk usage for path: %s", path)
     try:
@@ -45,6 +48,8 @@ def get_disk_capacity_for_path(path: Path) -> int:
             f"Detected non-positive capacity ({stats.total}) for path {path!r}"
         )
 
-    logger.debug("Successfully determined disk capacity for '%s': %d bytes", path, stats.total)
+    logger.debug(
+        "Successfully determined disk capacity for '%s': %d bytes", path, stats.total
+    )
 
     return stats.total

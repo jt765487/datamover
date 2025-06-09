@@ -4,22 +4,24 @@ from pathlib import Path
 from typing import Optional
 
 from datamover.file_functions.fs_mock import FS
-from datamover.file_functions.get_effective_disk_capacity import get_disk_capacity_for_path
+from datamover.file_functions.get_effective_disk_capacity import (
+    get_disk_capacity_for_path,
+)
 from datamover.purger.purger_thread import PurgerThread
 
 logger = logging.getLogger(__name__)
 
 
 def create_purger_thread(
-        *,
-        work_dir_path: Path,
-        uploaded_dir_path: Path,  # Used for capacity detection if configured_capacity is 0
-        fs: FS,
-        total_disk_capacity_bytes: int,
-        target_disk_usage_percent: float,
-        check_interval_seconds: float,
-        stop_event: threading.Event,
-        thread_name: Optional[str] = "PurgerThread",
+    *,
+    work_dir_path: Path,
+    uploaded_dir_path: Path,  # Used for capacity detection if configured_capacity is 0
+    fs: FS,
+    total_disk_capacity_bytes: int,
+    target_disk_usage_percent: float,
+    check_interval_seconds: float,
+    stop_event: threading.Event,
+    thread_name: Optional[str] = "PurgerThread",
 ) -> PurgerThread:
     """
     Constructs a PurgerThread.

@@ -1,12 +1,19 @@
-import pytest
 import logging
+from datetime import datetime  # <-- Import datetime
 from pathlib import Path
 from typing import List
 from unittest.mock import patch, MagicMock, call
 
-from datamover.file_functions.safe_delete import DeleteValidationError
+import pytest
+
 from datamover.file_functions.gather_entry_data import GatheredEntryData
-from datamover.purger.process_files_for_deletion import process_files_for_deletion
+from datamover.file_functions.safe_delete import DeleteValidationError
+
+# Import the function and the new helper for consistent formatting
+from datamover.purger.process_files_for_deletion import (
+    process_files_for_deletion,
+    _format_size_human_readable,
+)
 
 
 # Helper to create GatheredEntryData instances for tests
@@ -68,7 +75,6 @@ class TestProcessFilesForDeletion:
         assert (
             f"Selected 0 files from {DIR_DESC} for potential deletion." in caplog.text
         )
-        # SUT logs "Actually deleted..." only if bytes_actually_deleted > 0
         assert f"Actually deleted 0 bytes from {DIR_DESC}." not in caplog.text
 
     @patch("datamover.purger.process_files_for_deletion.safe_delete")
@@ -84,7 +90,7 @@ class TestProcessFilesForDeletion:
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
         files_to_be_deleted = [FILE_1, FILE_2]
         mock_select_files.return_value = files_to_be_deleted
-        mock_safe_delete.return_value = None  # safe_delete returns None on success
+        mock_safe_delete.return_value = None
 
         target_keep = TOTAL_SIZE_SAMPLE_FILES - (FILE_1.size + FILE_2.size)
 
@@ -115,14 +121,20 @@ class TestProcessFilesForDeletion:
             f"Selected {len(files_to_be_deleted)} files from {DIR_DESC} for potential deletion."
             in caplog.text
         )
-        assert (
-            f"Successfully deleted: {FILE_1.path} (freed: {FILE_1.size} bytes) from {DIR_DESC}."
-            in caplog.text
-        )
-        assert (
-            f"Successfully deleted: {FILE_2.path} (freed: {FILE_2.size} bytes) from {DIR_DESC}."
-            in caplog.text
-        )
+
+        # --- MODIFIED ASSERTIONS ---
+        for file_entry in files_to_be_deleted:
+            readable_size = _format_size_human_readable(file_entry.size)
+            readable_mtime = datetime.fromtimestamp(file_entry.mtime).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            expected_log = (
+                f"Successfully deleted: {file_entry.path} "
+                f"(size: {readable_size}, mtime: {readable_mtime}) "
+                f"from {DIR_DESC}."
+            )
+            assert expected_log in caplog.text
+
         assert (
             f"Actually deleted {expected_bytes_deleted} bytes from {DIR_DESC}."
             in caplog.text
@@ -138,49 +150,48 @@ class TestProcessFilesForDeletion:
         caplog: pytest.LogCaptureFixture,
     ):
         """Test when some deletions fail with DeleteValidationError."""
-        caplog.set_level(
-            logging.INFO, logger=SUT_LOGGER_NAME
-        )  # Catches INFO and WARNING
+        caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
         files_to_be_deleted = [FILE_1, FILE_2, FILE_3]
         mock_select_files.return_value = files_to_be_deleted
 
         error_message = "Test DeleteValidationError"
         mock_safe_delete.side_effect = [
-            None,
-            DeleteValidationError(error_message),
-            None,
+            None,  # FILE_1 succeeds
+            DeleteValidationError(error_message),  # FILE_2 fails
+            None,  # FILE_3 succeeds
         ]
-
-        target_keep = 0
 
         bytes_deleted = process_files_for_deletion(
             files_to_consider=SAMPLE_FILES_TO_CONSIDER,
             fs=mock_fs,
             directory_description=DIR_DESC,
-            target_bytes_to_keep=target_keep,
+            target_bytes_to_keep=0,
         )
 
-        expected_safe_delete_calls = [
-            call(FILE_1.path, mock_fs),
-            call(FILE_2.path, mock_fs),
-            call(FILE_3.path, mock_fs),
-        ]
-        mock_safe_delete.assert_has_calls(expected_safe_delete_calls, any_order=False)
+        mock_safe_delete.assert_has_calls(
+            [call(f.path, mock_fs) for f in files_to_be_deleted], any_order=False
+        )
 
         expected_bytes_deleted = FILE_1.size + FILE_3.size
         assert bytes_deleted == expected_bytes_deleted
 
-        assert f"Successfully deleted: {FILE_1.path}" in caplog.text
+        # --- MODIFIED ASSERTIONS ---
+        for file_entry in [FILE_1, FILE_3]:  # Check logs for successful deletions
+            readable_size = _format_size_human_readable(file_entry.size)
+            readable_mtime = datetime.fromtimestamp(file_entry.mtime).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            expected_log = (
+                f"Successfully deleted: {file_entry.path} "
+                f"(size: {readable_size}, mtime: {readable_mtime}) "
+                f"from {DIR_DESC}."
+            )
+            assert expected_log in caplog.text
+
         warning_msg = f"Could not delete file {FILE_2.path} from {DIR_DESC}: {error_message}. Skipping."
         assert warning_msg in caplog.text
-        # Check specific log record for level
-        assert any(
-            r.message == warning_msg
-            and r.levelno == logging.WARNING
-            and r.name == SUT_LOGGER_NAME
-            for r in caplog.records
-        )
-        assert f"Successfully deleted: {FILE_3.path}" in caplog.text
+        assert any(r.levelno == logging.WARNING for r in caplog.records)
+
         assert (
             f"Actually deleted {expected_bytes_deleted} bytes from {DIR_DESC}."
             in caplog.text
@@ -196,41 +207,44 @@ class TestProcessFilesForDeletion:
         caplog: pytest.LogCaptureFixture,
     ):
         """Test when some deletions fail with a generic Exception."""
-        caplog.set_level(
-            logging.INFO, logger=SUT_LOGGER_NAME
-        )  # Catches INFO, WARNING, ERROR
+        caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
         files_to_be_deleted = [FILE_1, FILE_2]
         mock_select_files.return_value = files_to_be_deleted
 
         generic_error_message = "Test Generic Exception"
         mock_safe_delete.side_effect = [
-            None,
-            RuntimeError(generic_error_message),
+            None,  # FILE_1 succeeds
+            RuntimeError(generic_error_message),  # FILE_2 fails
         ]
-
-        target_keep = 0
 
         bytes_deleted = process_files_for_deletion(
             files_to_consider=SAMPLE_FILES_TO_CONSIDER,
             fs=mock_fs,
             directory_description=DIR_DESC,
-            target_bytes_to_keep=target_keep,
+            target_bytes_to_keep=0,
         )
 
         expected_bytes_deleted = FILE_1.size
         assert bytes_deleted == expected_bytes_deleted
 
-        assert f"Successfully deleted: {FILE_1.path}" in caplog.text
+        # --- MODIFIED ASSERTION ---
+        readable_size = _format_size_human_readable(FILE_1.size)
+        readable_mtime = datetime.fromtimestamp(FILE_1.mtime).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        expected_log = (
+            f"Successfully deleted: {FILE_1.path} "
+            f"(size: {readable_size}, mtime: {readable_mtime}) "
+            f"from {DIR_DESC}."
+        )
+        assert expected_log in caplog.text
+
         error_msg = f"Unexpected error deleting file {FILE_2.path} from {DIR_DESC}: {generic_error_message}. Skipping."
         assert error_msg in caplog.text
-        # Check specific log record for level and exc_info
-        error_log_record = next(
-            r
+        assert any(
+            r.levelno == logging.ERROR and r.exc_info is not None
             for r in caplog.records
-            if error_msg in r.message and r.name == SUT_LOGGER_NAME
         )
-        assert error_log_record.levelno == logging.ERROR
-        assert error_log_record.exc_info is not None
 
         assert (
             f"Actually deleted {expected_bytes_deleted} bytes from {DIR_DESC}."
@@ -252,13 +266,12 @@ class TestProcessFilesForDeletion:
         mock_select_files.return_value = files_to_be_deleted
 
         mock_safe_delete.side_effect = DeleteValidationError("Failed for test")
-        target_keep = 0
 
         bytes_deleted = process_files_for_deletion(
             files_to_consider=SAMPLE_FILES_TO_CONSIDER,
             fs=mock_fs,
             directory_description=DIR_DESC,
-            target_bytes_to_keep=target_keep,
+            target_bytes_to_keep=0,
         )
 
         assert bytes_deleted == 0

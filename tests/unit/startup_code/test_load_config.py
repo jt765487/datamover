@@ -94,8 +94,8 @@ def test_load_config_happy_path(config_file):
     # and the config file itself exists.
     fs.exists.side_effect = (
         lambda p: p == Path("/tmp/logs").expanduser()
-                  or p == Path("/tmp/base").expanduser()
-                  or p == config_file  # Make sure the config file itself is considered existing
+        or p == Path("/tmp/base").expanduser()
+        or p == config_file  # Make sure the config file itself is considered existing
     )
     # Ensure config_file is considered a file
     fs.is_file.side_effect = lambda p: p == config_file
@@ -186,7 +186,10 @@ def test_config_path_not_a_file(tmp_path):
     ],
 )
 def test_missing_option_raises(
-        section, key, tmp_path, config_file  # config_file fixture writes VALID_INI
+    section,
+    key,
+    tmp_path,
+    config_file,  # config_file fixture writes VALID_INI
 ):
     original_content = config_file.read_text()  # Reads VALID_INI which now has Purger
     lines = original_content.splitlines()
@@ -208,29 +211,34 @@ def test_missing_option_raises(
     # Ensure necessary paths "exist" for the mock FS, including the modified config file.
     fs.exists.side_effect = (
         lambda p: p == Path("/tmp/logs").expanduser()
-                  or p == Path("/tmp/base").expanduser()
-                  or p == cfg_path  # The modified config file
+        or p == Path("/tmp/base").expanduser()
+        or p == cfg_path  # The modified config file
     )
-    fs.is_file.side_effect = lambda p: p == cfg_path  # Only the modified config file is a file
+    fs.is_file.side_effect = (
+        lambda p: p == cfg_path
+    )  # Only the modified config file is a file
 
     with pytest.raises(ConfigError) as exc:
         load_config(str(cfg_path), fs=fs)
     assert f"[{section}] missing option '{key}'" in str(exc.value)
 
 
-@pytest.mark.parametrize("section_to_miss", [
-    "Directories", "Files", "Mover", "Scanner", "Tailer", "Uploader", "Purger"
-])
+@pytest.mark.parametrize(
+    "section_to_miss",
+    ["Directories", "Files", "Mover", "Scanner", "Tailer", "Uploader", "Purger"],
+)
 def test_missing_section_raises(tmp_path, config_file, section_to_miss):
-    txt = config_file.read_text().replace(f"[{section_to_miss}]", f"[{section_to_miss}_TYPO]")
+    txt = config_file.read_text().replace(
+        f"[{section_to_miss}]", f"[{section_to_miss}_TYPO]"
+    )
     cfg_path = tmp_path / "config_modified.ini"
     cfg_path.write_text(txt)
 
     fs = make_fs_stub()
     fs.exists.side_effect = (
         lambda p: p == Path("/tmp/logs").expanduser()
-                  or p == Path("/tmp/base").expanduser()
-                  or p == cfg_path
+        or p == Path("/tmp/base").expanduser()
+        or p == cfg_path
     )
     fs.is_file.side_effect = lambda p: p == cfg_path
 
@@ -249,8 +257,8 @@ def test_bad_float_parsing(tmp_path, config_file):
     fs = make_fs_stub()
     fs.exists.side_effect = (
         lambda p: p == Path("/tmp/logs").expanduser()
-                  or p == Path("/tmp/base").expanduser()
-                  or p == cfg_path
+        or p == Path("/tmp/base").expanduser()
+        or p == cfg_path
     )
     fs.is_file.side_effect = lambda p: p == cfg_path
 
@@ -268,8 +276,8 @@ def test_bad_boolean(tmp_path, config_file):
     fs = make_fs_stub()
     fs.exists.side_effect = (
         lambda p: p == Path("/tmp/logs").expanduser()
-                  or p == Path("/tmp/base").expanduser()
-                  or p == cfg_path
+        or p == Path("/tmp/base").expanduser()
+        or p == cfg_path
     )
     fs.is_file.side_effect = lambda p: p == cfg_path
 
@@ -289,8 +297,8 @@ def test_invalid_remote_url(tmp_path, config_file):
     fs = make_fs_stub()
     fs.exists.side_effect = (
         lambda p: p == Path("/tmp/logs").expanduser()
-                  or p == Path("/tmp/base").expanduser()
-                  or p == cfg_path
+        or p == Path("/tmp/base").expanduser()
+        or p == cfg_path
     )
     fs.is_file.side_effect = lambda p: p == cfg_path
 
@@ -312,7 +320,7 @@ def test_logger_dir_checks(config_file, tmp_path):
     # Base dir exists, config file exists, but target logger_dir does not
     fs_s1.exists.side_effect = (
         lambda p: p == Path("/tmp/base").expanduser()  # Base dir
-                  or p == cfg_path_scenario1  # Config file itself
+        or p == cfg_path_scenario1  # Config file itself
         # mock_logger_path will implicitly return False from MagicMock default or be False here
     )
     # Correctly identify config file and base dir as file/dir
@@ -334,8 +342,8 @@ def test_logger_dir_checks(config_file, tmp_path):
     fs_s2 = make_fs_stub()
     fs_s2.exists.side_effect = (
         lambda p: p == Path("/tmp/base").expanduser()
-                  or p == cfg_path_scenario2
-                  or p == mock_logger_file_path  # logger_path "exists"
+        or p == cfg_path_scenario2
+        or p == mock_logger_file_path  # logger_path "exists"
     )
     fs_s2.is_dir.side_effect = (  # logger_path is NOT a dir, base_dir is
         lambda p: p == Path("/tmp/base").expanduser()
@@ -353,16 +361,22 @@ def test_base_dir_resolve_os_error(config_file):
     fs = make_fs_stub()
     # Make sure config file itself and logger_dir are fine to isolate base_dir resolve
     fs.is_file.side_effect = lambda p: p == config_file
-    fs.exists.side_effect = lambda p: p == config_file or p == Path("/tmp/logs").expanduser()
+    fs.exists.side_effect = (
+        lambda p: p == config_file or p == Path("/tmp/logs").expanduser()
+    )
     fs.is_dir.side_effect = lambda p: p == Path("/tmp/logs").expanduser()
 
     def custom_resolve(p, strict=False):
         expanded_p = Path(p).expanduser()
-        if expanded_p == Path("/tmp/base").expanduser() and not strict:  # base_dir resolve
+        if (
+            expanded_p == Path("/tmp/base").expanduser() and not strict
+        ):  # base_dir resolve
             raise OSError("boom resolve base_dir")
         # For logger_dir (strict=True) or other calls
         if strict and not fs.exists(expanded_p):  # fs.exists uses the side_effect above
-            raise FileNotFoundError(f"Mock FileNotFoundError for {expanded_p} (strict=True)")
+            raise FileNotFoundError(
+                f"Mock FileNotFoundError for {expanded_p} (strict=True)"
+            )
         return expanded_p
 
     fs.resolve.side_effect = custom_resolve
@@ -383,8 +397,8 @@ def test_scanner_timeouts_validation(tmp_path, config_file):
     fs = make_fs_stub()
     fs.exists.side_effect = (
         lambda p: p == Path("/tmp/logs").expanduser()
-                  or p == Path("/tmp/base").expanduser()
-                  or p == cfg_path
+        or p == Path("/tmp/base").expanduser()
+        or p == cfg_path
     )
     fs.is_file.side_effect = lambda p: p == cfg_path
 
@@ -401,9 +415,7 @@ def test_uploader_backoff_validation(tmp_path, config_file):
         if line.strip().startswith("initial_backoff ="):
             output_lines.append("initial_backoff = 2.0")
         elif line.strip().startswith("max_backoff ="):
-            output_lines.append(
-                "max_backoff = 1.0"
-            )
+            output_lines.append("max_backoff = 1.0")
         else:
             output_lines.append(line)
     txt = "\n".join(output_lines)
@@ -413,8 +425,8 @@ def test_uploader_backoff_validation(tmp_path, config_file):
     fs = make_fs_stub()
     fs.exists.side_effect = (
         lambda p: p == Path("/tmp/logs").expanduser()
-                  or p == Path("/tmp/base").expanduser()
-                  or p == cfg_path
+        or p == Path("/tmp/base").expanduser()
+        or p == cfg_path
     )
     fs.is_file.side_effect = lambda p: p == cfg_path
 
@@ -428,20 +440,24 @@ def test_uploader_backoff_validation(tmp_path, config_file):
     [
         ("pcap_extension_no_dot", "", f"'{'pcap_extension_no_dot'}' cannot be empty"),
         (
-                "pcap_extension_no_dot",
-                ".pcap",
-                "pcap_extension_no_dot must be a non-empty string without a dot",
+            "pcap_extension_no_dot",
+            ".pcap",
+            "pcap_extension_no_dot must be a non-empty string without a dot",
         ),
         ("csv_extension_no_dot", "", f"'{'csv_extension_no_dot'}' cannot be empty"),
         (
-                "csv_extension_no_dot",
-                ".csv",
-                "csv_extension_no_dot must be a non-empty string without a dot",
+            "csv_extension_no_dot",
+            ".csv",
+            "csv_extension_no_dot must be a non-empty string without a dot",
         ),
     ],
 )
 def test_bad_file_extensions(
-        tmp_path, key_to_modify, bad_value, expected_error_msg_part, config_file  # config_file creates full VALID_INI
+    tmp_path,
+    key_to_modify,
+    bad_value,
+    expected_error_msg_part,
+    config_file,  # config_file creates full VALID_INI
 ):
     original_content = config_file.read_text()  # VALID_INI now includes Purger
     lines = original_content.splitlines()
@@ -488,13 +504,23 @@ def test_bad_file_extensions(
         ("Uploader", "initial_backoff", "-0.1", "0.0"),
         ("Uploader", "max_backoff", "-1", "0.0"),
         ("Purger", "purger_poll_interval_seconds", "-1", "0.0"),  # Added Purger test
-        ("Purger", "target_disk_usage_percent", "-0.1", "0.0"),  # Added Purger test (min test)
-        ("Purger", "target_disk_usage_percent", "1.1", "max_value=1.0"),  # Added Purger test (max test)
+        (
+            "Purger",
+            "target_disk_usage_percent",
+            "-0.1",
+            "0.0",
+        ),  # Added Purger test (min test)
+        (
+            "Purger",
+            "target_disk_usage_percent",
+            "1.1",
+            "max_value=1.0",
+        ),  # Added Purger test (max test)
         ("Purger", "total_disk_capacity_bytes", "-100", "0"),  # Added Purger test
     ],
 )
 def test_numeric_value_out_of_bounds(  # Renamed for clarity
-        tmp_path, section, key, bad_value, min_value_text_for_msg, config_file
+    tmp_path, section, key, bad_value, min_value_text_for_msg, config_file
 ):
     original_content = config_file.read_text()
     lines = original_content.splitlines()
@@ -565,7 +591,10 @@ def test_load_config_unicode_decode_error(tmp_path):
     # Write a valid INI with Purger but with bad encoding start
     ini_content_with_purger = VALID_INI
     config_path.write_bytes(
-        b"\xff\xfe" + ini_content_with_purger.encode('utf-16-le')  # Example of bad start for UTF-8 read
+        b"\xff\xfe"
+        + ini_content_with_purger.encode(
+            "utf-16-le"
+        )  # Example of bad start for UTF-8 read
     )
     fs = make_fs_stub()
     fs.is_file.side_effect = lambda p: p == config_path
@@ -576,7 +605,9 @@ def test_load_config_unicode_decode_error(tmp_path):
         load_config(str(config_path), fs=fs)
     assert "error reading or parsing config file" in str(exc.value)
     # The exact error message for codec can vary slightly based on Python version/OS
-    assert "codec can't decode byte" in str(exc.value) or "invalid start byte" in str(exc.value)
+    assert "codec can't decode byte" in str(exc.value) or "invalid start byte" in str(
+        exc.value
+    )
 
 
 @pytest.mark.parametrize(
@@ -586,14 +617,14 @@ def test_load_config_unicode_decode_error(tmp_path):
         ("[Section]\nkey_no_value", ParsingError),
         ("[Section]\n: value_no_key", ParsingError),
         # Add a case that would be valid if not for the required Purger section
-        (VALID_INI.replace("[Purger]\n", ";[Purger]\n"), MissingSectionHeaderError)
+        (VALID_INI.replace("[Purger]\n", ";[Purger]\n"), MissingSectionHeaderError),
         # This won't work as expected, as purger is required.
         # This test tests ConfigParser errors, not our custom missing section.
         # Our "Missing section [Purger]" is caught earlier.
     ],
 )
 def test_load_config_malformed_ini_parsing(  # Renamed for clarity
-        tmp_path, malformed_ini_content, expected_exception_type
+    tmp_path, malformed_ini_content, expected_exception_type
 ):
     cfg_path = tmp_path / "config.ini"
     cfg_path.write_text(malformed_ini_content)
@@ -623,7 +654,11 @@ def test_logger_dir_resolve_os_error(tmp_path, config_file):
 
     # Ensure config file itself and base_dir are fine
     fs.is_file.side_effect = lambda p: p == config_file
-    fs.exists.side_effect = lambda p: p in (default_logger_path, default_base_path, config_file)
+    fs.exists.side_effect = lambda p: p in (
+        default_logger_path,
+        default_base_path,
+        config_file,
+    )
     fs.is_dir.side_effect = lambda p: p in (default_logger_path, default_base_path)
 
     def custom_resolve(p, strict=False):
@@ -633,7 +668,9 @@ def test_logger_dir_resolve_os_error(tmp_path, config_file):
         if expanded_p == default_base_path and not strict:  # base_dir resolve
             return expanded_p  # OK
         if strict and not fs.exists(expanded_p):
-            raise FileNotFoundError(f"Mock FileNotFoundError for {expanded_p} (strict=True)")
+            raise FileNotFoundError(
+                f"Mock FileNotFoundError for {expanded_p} (strict=True)"
+            )
         return expanded_p
 
     fs.resolve.side_effect = custom_resolve
@@ -648,7 +685,9 @@ def test_base_dir_resolve_unexpected_error(config_file):
     fs = make_fs_stub()
     # Let logger_dir resolve fine, and config file exist
     fs.is_file.side_effect = lambda p: p == config_file
-    fs.exists.side_effect = lambda p: p == Path("/tmp/logs").expanduser() or p == config_file
+    fs.exists.side_effect = (
+        lambda p: p == Path("/tmp/logs").expanduser() or p == config_file
+    )
     fs.is_dir.side_effect = lambda p: p == Path("/tmp/logs").expanduser()
 
     def custom_resolve_base(p, strict=False):
@@ -657,7 +696,8 @@ def test_base_dir_resolve_unexpected_error(config_file):
             raise ValueError("Unexpected base_dir resolve error")
         # For logger_dir (strict=True)
         if expanded_p == Path("/tmp/logs").expanduser() and strict:
-            if not fs.exists(expanded_p): raise FileNotFoundError()
+            if not fs.exists(expanded_p):
+                raise FileNotFoundError()
             return expanded_p
         return expanded_p  # Should not happen if logic is correct for this test
 
@@ -675,7 +715,11 @@ def test_logger_dir_resolve_unexpected_error(config_file):
     default_base_path = Path("/tmp/base").expanduser()
 
     fs.is_file.side_effect = lambda p: p == config_file
-    fs.exists.side_effect = lambda p: p in (default_logger_path, default_base_path, config_file)
+    fs.exists.side_effect = lambda p: p in (
+        default_logger_path,
+        default_base_path,
+        config_file,
+    )
     fs.is_dir.side_effect = lambda p: p in (default_logger_path, default_base_path)
 
     def custom_resolve_logger(p, strict=False):
@@ -687,7 +731,9 @@ def test_logger_dir_resolve_unexpected_error(config_file):
             return expanded_p
         # Fallback for other strict resolves or if base_dir was strict
         if strict and not fs.exists(expanded_p):
-            raise FileNotFoundError(f"Mock FileNotFoundError for {expanded_p} (strict=True)")
+            raise FileNotFoundError(
+                f"Mock FileNotFoundError for {expanded_p} (strict=True)"
+            )
         return expanded_p
 
     fs.resolve.side_effect = custom_resolve_logger
@@ -721,12 +767,15 @@ def test_unexpected_error_during_section_parsing(config_file):
         Path("/tmp/base").expanduser(),
         config_file,
     )
-    fs.is_dir.side_effect = lambda p: p in (Path("/tmp/logs").expanduser(), Path("/tmp/base").expanduser())
+    fs.is_dir.side_effect = lambda p: p in (
+        Path("/tmp/logs").expanduser(),
+        Path("/tmp/base").expanduser(),
+    )
 
     # Patch one of the parsing functions *after* the initial read and section check
     with patch(
-            "datamover.startup_code.load_config._parse_files_section_config",  # Example
-            side_effect=ValueError("Internal parse boom"),
+        "datamover.startup_code.load_config._parse_files_section_config",  # Example
+        side_effect=ValueError("Internal parse boom"),
     ):
         with pytest.raises(ConfigError) as exc:
             load_config(str(config_file), fs=fs)
@@ -742,7 +791,10 @@ def test_unexpected_error_during_config_instantiation(config_file):
         Path("/tmp/base").expanduser(),
         config_file,
     )
-    fs.is_dir.side_effect = lambda p: p in (Path("/tmp/logs").expanduser(), Path("/tmp/base").expanduser())
+    fs.is_dir.side_effect = lambda p: p in (
+        Path("/tmp/logs").expanduser(),
+        Path("/tmp/base").expanduser(),
+    )
 
     with patch("datamover.startup_code.load_config.Config") as MockConfigClass:
         MockConfigClass.side_effect = TypeError("Config class init boom")
@@ -775,5 +827,7 @@ def test_get_int_option_validations():
         _get_int_option(cp, "TestInt", "too_high", max_value=50)
     with pytest.raises(ConfigError, match="missing option 'non_existent'"):
         _get_int_option(cp, "TestInt", "non_existent")
-    with pytest.raises(ConfigError, match=r"\[TestInt\] 'empty_val' \(''\) must be an integer"):
+    with pytest.raises(
+        ConfigError, match=r"\[TestInt\] 'empty_val' \(''\) must be an integer"
+    ):
         _get_int_option(cp, "TestInt", "empty_val")

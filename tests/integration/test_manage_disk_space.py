@@ -77,7 +77,7 @@ class TestPurgerIntegration:
         create_files_for_purging(real_fs, uploaded_dir, files_in_uploaded)
         create_files_for_purging(real_fs, work_dir, files_in_work)
 
-        total_initial_size = 1000 + 500 + 2000 + 200  # 3700 bytes
+        _total_initial_size = 1000 + 500 + 2000 + 200  # 3700 bytes
         total_disk_capacity = 5000
         target_disk_usage_percent = 0.30  # Target to keep = 5000 * 0.30 = 1500 bytes
         # Need to delete = 3700 - 1500 = 2200 bytes
@@ -168,7 +168,7 @@ class TestPurgerIntegration:
         create_files_for_purging(real_fs, uploaded_dir, files_in_uploaded)
         create_files_for_purging(real_fs, work_dir, files_in_work)
 
-        total_initial_size = 100 + 200  # 300
+        _total_initial_size = 100 + 200  # 300
         total_disk_capacity = 1000
         target_disk_usage_percent = 0.80  # Target to keep = 800 bytes
         # Current (300) < Target to keep (800)
@@ -208,7 +208,7 @@ class TestPurgerIntegration:
 
         create_files_for_purging(real_fs, uploaded_dir, files_in_uploaded)
 
-        total_initial_size = 1000 + 800 + 500  # 2300 bytes
+        _total_initial_size = 1000 + 800 + 500  # 2300 bytes
         total_disk_capacity = 3000
         # Target to keep = 3000 * 0.30 = 900 bytes
         # Need to delete = 2300 - 900 = 1400 bytes
@@ -293,7 +293,7 @@ class TestPurgerIntegration:
 
         create_files_for_purging(real_fs, work_dir, files_in_work)
 
-        total_initial_size = 1200 + 700 + 300  # 2200 bytes
+        _total_initial_size = 1200 + 700 + 300  # 2200 bytes
         total_disk_capacity = 3000
         # Target to keep = 3000 * 0.20 = 600 bytes
         # Need to delete = 2200 - 600 = 1600 bytes

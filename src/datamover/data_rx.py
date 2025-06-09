@@ -8,7 +8,10 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Configure logging with a timestamp for better tracking
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
 
 class PcapHandler(BaseHTTPRequestHandler):
     # Class-level variables for shared state across all handler instances
@@ -40,15 +43,23 @@ class PcapHandler(BaseHTTPRequestHandler):
 
             # Prune timestamps older than 1 minute
             one_minute_ago = current_time - timedelta(minutes=1)
-            while PcapHandler._last_minute_timestamps and PcapHandler._last_minute_timestamps[0] < one_minute_ago:
+            while (
+                PcapHandler._last_minute_timestamps
+                and PcapHandler._last_minute_timestamps[0] < one_minute_ago
+            ):
                 PcapHandler._last_minute_timestamps.popleft()
 
             files_in_last_minute = len(PcapHandler._last_minute_timestamps)
             total_files = PcapHandler._total_files_received
 
         logging.info("Received Content-Type: %s", content_type)
-        logging.info("Received file '%s' (%d bytes). Metrics: Files last minute: %d, Total files: %d",
-                     file_name, data_length, files_in_last_minute, total_files)
+        logging.info(
+            "Received file '%s' (%d bytes). Metrics: Files last minute: %d, Total files: %d",
+            file_name,
+            data_length,
+            files_in_last_minute,
+            total_files,
+        )
 
         # Respond with 200 OK and body "OK"
         self.send_response(200)
@@ -59,10 +70,13 @@ class PcapHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         # Route internal HTTP server logs through logging module
-        logging.info("%s - - [%s] %s",
-                     self.client_address[0],
-                     self.log_date_time_string(),
-                     fmt % args)
+        logging.info(
+            "%s - - [%s] %s",
+            self.client_address[0],
+            self.log_date_time_string(),
+            fmt % args,
+        )
+
 
 def main():
     """
@@ -75,8 +89,9 @@ def main():
         server.serve_forever()
     except KeyboardInterrupt:
         logging.info("Server received KeyboardInterrupt. Shutting down...")
-        server.shutdown() # Shuts down the server gracefully
-        sys.exit(0) # Exit cleanly
+        server.shutdown()  # Shuts down the server gracefully
+        sys.exit(0)  # Exit cleanly
+
 
 if __name__ == "__main__":
     main()
