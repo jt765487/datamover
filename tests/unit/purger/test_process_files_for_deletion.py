@@ -12,7 +12,7 @@ from datamover.file_functions.safe_delete import DeleteValidationError
 # Import the function and the new helper for consistent formatting
 from datamover.purger.process_files_for_deletion import (
     process_files_for_deletion,
-    _format_size_human_readable,
+    format_size_human_readable,
 )
 
 
@@ -124,13 +124,13 @@ class TestProcessFilesForDeletion:
 
         # --- MODIFIED ASSERTIONS ---
         for file_entry in files_to_be_deleted:
-            readable_size = _format_size_human_readable(file_entry.size)
+            readable_size = format_size_human_readable(file_entry.size)
             readable_mtime = datetime.fromtimestamp(file_entry.mtime).strftime(
                 "%Y-%m-%d %H:%M:%S"
             )
             expected_log = (
                 f"Successfully deleted: {file_entry.path} "
-                f"(size: {readable_size}, mtime: {readable_mtime}) "
+                f"(size: {readable_size}, time: {readable_mtime}) "
                 f"from {DIR_DESC}."
             )
             assert expected_log in caplog.text
@@ -177,13 +177,13 @@ class TestProcessFilesForDeletion:
 
         # --- MODIFIED ASSERTIONS ---
         for file_entry in [FILE_1, FILE_3]:  # Check logs for successful deletions
-            readable_size = _format_size_human_readable(file_entry.size)
+            readable_size = format_size_human_readable(file_entry.size)
             readable_mtime = datetime.fromtimestamp(file_entry.mtime).strftime(
                 "%Y-%m-%d %H:%M:%S"
             )
             expected_log = (
                 f"Successfully deleted: {file_entry.path} "
-                f"(size: {readable_size}, mtime: {readable_mtime}) "
+                f"(size: {readable_size}, time: {readable_mtime}) "
                 f"from {DIR_DESC}."
             )
             assert expected_log in caplog.text
@@ -228,13 +228,13 @@ class TestProcessFilesForDeletion:
         assert bytes_deleted == expected_bytes_deleted
 
         # --- MODIFIED ASSERTION ---
-        readable_size = _format_size_human_readable(FILE_1.size)
+        readable_size = format_size_human_readable(FILE_1.size)
         readable_mtime = datetime.fromtimestamp(FILE_1.mtime).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
         expected_log = (
             f"Successfully deleted: {FILE_1.path} "
-            f"(size: {readable_size}, mtime: {readable_mtime}) "
+            f"(size: {readable_size}, time: {readable_mtime}) "
             f"from {DIR_DESC}."
         )
         assert expected_log in caplog.text

@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Tuple, List
+from typing import List, Tuple
 
 from datamover.file_functions.file_exceptions import ScanDirectoryError
 from datamover.file_functions.fs_mock import FS
@@ -19,13 +19,15 @@ def scan_and_sort_files(
     files_sorted: List[GatheredEntryData] = []
     scan_ok = True
     try:
-        logger.debug(f"Scanning {description} directory: {directory_path}")
+        logger.debug("Scanning %s directory: %s", description, directory_path)
         files_sorted = gather_file_data(directory_path, fs)
         files_sorted.sort()
         logger.info(
-            f"Found and sorted {len(files_sorted)} files in {description} directory."
+            "Found and sorted %d files in %s directory.", len(files_sorted), description
         )
     except ScanDirectoryError as e:
-        logger.error(f"Error scanning {description} directory {directory_path}: {e}.")
+        logger.error(
+            "Error scanning %s directory %s: %s.", description, directory_path, e
+        )
         scan_ok = False
     return files_sorted, scan_ok
