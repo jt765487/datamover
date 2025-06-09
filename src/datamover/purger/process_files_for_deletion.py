@@ -20,7 +20,7 @@ def process_files_for_deletion(
 ) -> int:
     """Selects and attempts to delete files from a given list."""
     if not files_to_consider:
-        logger.info(f"No files in {directory_description} to process for deletion.")
+        logger.info("No files in %s to process for deletion.", directory_description)
         return 0
 
     current_size = sum(f.size for f in files_to_consider)
@@ -30,7 +30,9 @@ def process_files_for_deletion(
         target_bytes_to_keep=target_bytes_to_keep,
     )
     logger.info(
-        f"Selected {len(files_to_delete)} files from {directory_description} for potential deletion."
+        "Selected %s files from %s for potential deletion.",
+        len(files_to_delete),
+        directory_description,
     )
 
     bytes_actually_deleted = 0
@@ -59,12 +61,17 @@ def process_files_for_deletion(
             )
         except Exception as ex:
             logger.error(
-                f"Unexpected error deleting file {file_entry.path} from {directory_description}: {ex}. Skipping.",
+                "Unexpected error deleting file %s from %s: %s. Skipping.",
+                file_entry.path,
+                directory_description,
+                ex,
                 exc_info=True,
             )
 
     if bytes_actually_deleted > 0:
+        readable_deleted = format_size_human_readable(bytes_actually_deleted)
         logger.info(
-            f"Actually deleted {bytes_actually_deleted} bytes from {directory_description}."
+            "Actually deleted %s from %s.", readable_deleted, directory_description
         )
+
     return bytes_actually_deleted
