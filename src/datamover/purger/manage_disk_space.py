@@ -4,6 +4,7 @@ from pathlib import Path
 from datamover.file_functions.fs_mock import FS
 from datamover.purger.process_files_for_deletion import process_files_for_deletion
 from datamover.purger.scan_and_sort_files import scan_and_sort_files
+from tests.unit.purger.format_size_human_readable import format_size_human_readable
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,9 @@ def manage_disk_space(
         target_disk_usage_percent: The target disk usage (e.g., 0.80 for 80%).
     """
     logger.info(
-        f"Starting disk space management. Target: < {target_disk_usage_percent * 100:.0f}% "
-        f"of {total_disk_capacity_bytes} bytes."
+        "Starting disk space management. Target: < %.0f%% of %s.",
+        target_disk_usage_percent * 100,
+        format_size_human_readable(total_disk_capacity_bytes),
     )
 
     # 1. Scan directories and sort files
@@ -66,11 +68,14 @@ def manage_disk_space(
     )
 
     logger.info(
-        f"Current total used space: {current_total_used_space_bytes} bytes "
-        f"(Uploaded: {size_of_uploaded_files}, Work: {size_of_work_files})."
+        "Current total used space: %s (Uploaded: %s, Work: %s).",
+        format_size_human_readable(current_total_used_space_bytes),
+        format_size_human_readable(size_of_uploaded_files),
+        format_size_human_readable(size_of_work_files),
     )
     logger.info(
-        f"Target space to keep on disk (max overall): {target_bytes_to_keep_on_disk_overall} bytes."
+        "Target space to keep on disk (max overall): %s.",
+        format_size_human_readable(target_bytes_to_keep_on_disk_overall),
     )
 
     if current_total_used_space_bytes <= target_bytes_to_keep_on_disk_overall:
@@ -81,7 +86,8 @@ def manage_disk_space(
         current_total_used_space_bytes - target_bytes_to_keep_on_disk_overall
     )
     logger.info(
-        f"Need to delete at least {overall_bytes_to_delete_target} bytes overall to reach target."
+        "Need to delete at least %s overall to reach target.",
+        format_size_human_readable(overall_bytes_to_delete_target),
     )
 
     total_bytes_deleted_this_session = 0
@@ -105,7 +111,8 @@ def manage_disk_space(
 
     if bytes_still_needing_deletion > 0 and work_files_sorted:
         logger.info(
-            f"Still need to delete {bytes_still_needing_deletion} bytes. Processing work directory."
+            "Still need to delete %s. Processing work directory.",
+            format_size_human_readable(bytes_still_needing_deletion),
         )
         target_bytes_to_keep_in_work_dir = max(
             0, size_of_work_files - bytes_still_needing_deletion
@@ -119,13 +126,15 @@ def manage_disk_space(
         total_bytes_deleted_this_session += bytes_deleted_from_work
     elif bytes_still_needing_deletion > 0:
         logger.info(
-            f"Still need to delete {bytes_still_needing_deletion} bytes, but no files available in work directory."
+            "Still need to delete %s, but no files available in work directory.",
+            format_size_human_readable(bytes_still_needing_deletion),
         )
 
     # 5. Final summary
     logger.info("Disk space management session finished.")
     logger.info(
-        f"Total bytes actually deleted in this session: {total_bytes_deleted_this_session}."
+        "Total bytes actually deleted in this session: %s.",
+        format_size_human_readable(total_bytes_deleted_this_session),
     )
 
     final_estimated_used_space_bytes = (
@@ -137,11 +146,14 @@ def manage_disk_space(
             final_estimated_used_space_bytes / total_disk_capacity_bytes
         ) * 100
         logger.info(
-            f"Estimated current disk usage: {final_estimated_used_space_bytes} bytes ({final_estimated_usage_percent:.1f}%)."
+            "Estimated current disk usage: %s (%.1f%%).",
+            format_size_human_readable(final_estimated_used_space_bytes),
+            final_estimated_usage_percent,
         )
     else:
         logger.info(
-            f"Estimated current disk usage: {final_estimated_used_space_bytes} bytes (total capacity was zero or not provided)."
+            "Estimated current disk usage: %s (total capacity was zero or not provided).",
+            format_size_human_readable(final_estimated_used_space_bytes),
         )
 
     deficit_after_deletions = (
@@ -150,9 +162,10 @@ def manage_disk_space(
 
     if deficit_after_deletions > 0:
         logger.warning(
-            f"Disk cleanup finished, but may still be {deficit_after_deletions} bytes "
-            f"above the target. This can occur if remaining files are very large, "
-            f"all deletable files were processed, or deletions failed."
+            "Disk cleanup finished, but may still be %s above the target. "
+            "This can occur if remaining files are very large, all deletable "
+            "files were processed, or deletions failed.",
+            format_size_human_readable(deficit_after_deletions),
         )
     elif total_bytes_deleted_this_session > 0:
         logger.info("Successfully brought disk usage to target or below.")

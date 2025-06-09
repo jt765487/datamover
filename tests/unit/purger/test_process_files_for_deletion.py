@@ -8,6 +8,7 @@ import pytest
 
 from datamover.file_functions.gather_entry_data import GatheredEntryData
 from datamover.file_functions.safe_delete import DeleteValidationError
+
 # Import the function and the new helper for consistent formatting
 from datamover.purger.process_files_for_deletion import (
     process_files_for_deletion,
@@ -34,7 +35,7 @@ SUT_LOGGER_NAME = "datamover.purger.process_files_for_deletion"
 
 class TestProcessFilesForDeletion:
     def test_no_files_to_consider(
-            self, mock_fs: MagicMock, caplog: pytest.LogCaptureFixture
+        self, mock_fs: MagicMock, caplog: pytest.LogCaptureFixture
     ):
         """Test when the input list of files is empty."""
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -49,10 +50,10 @@ class TestProcessFilesForDeletion:
 
     @patch("datamover.purger.process_files_for_deletion.select_files_to_delete")
     def test_no_files_selected_for_deletion(
-            self,
-            mock_select_files: MagicMock,
-            mock_fs: MagicMock,
-            caplog: pytest.LogCaptureFixture,
+        self,
+        mock_select_files: MagicMock,
+        mock_fs: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test when files are considered, but none are selected for deletion."""
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -72,18 +73,18 @@ class TestProcessFilesForDeletion:
         )
         assert bytes_deleted == 0
         assert (
-                f"Selected 0 files from {DIR_DESC} for potential deletion." in caplog.text
+            f"Selected 0 files from {DIR_DESC} for potential deletion." in caplog.text
         )
         assert f"Actually deleted" not in caplog.text
 
     @patch("datamover.purger.process_files_for_deletion.safe_delete")
     @patch("datamover.purger.process_files_for_deletion.select_files_to_delete")
     def test_all_selected_files_deleted_successfully(
-            self,
-            mock_select_files: MagicMock,
-            mock_safe_delete: MagicMock,
-            mock_fs: MagicMock,
-            caplog: pytest.LogCaptureFixture,
+        self,
+        mock_select_files: MagicMock,
+        mock_safe_delete: MagicMock,
+        mock_fs: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test when selected files are successfully deleted."""
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -117,8 +118,8 @@ class TestProcessFilesForDeletion:
         assert bytes_deleted == expected_bytes_deleted
 
         assert (
-                f"Selected {len(files_to_be_deleted)} files from {DIR_DESC} for potential deletion."
-                in caplog.text
+            f"Selected {len(files_to_be_deleted)} files from {DIR_DESC} for potential deletion."
+            in caplog.text
         )
 
         # --- MODIFIED ASSERTIONS ---
@@ -136,19 +137,16 @@ class TestProcessFilesForDeletion:
 
         # Check the final deletion summary uses human-readable format
         readable_total = format_size_human_readable(expected_bytes_deleted)
-        assert (
-                f"Actually deleted {readable_total} from {DIR_DESC}."
-                in caplog.text
-        )
+        assert f"Actually deleted {readable_total} from {DIR_DESC}." in caplog.text
 
     @patch("datamover.purger.process_files_for_deletion.safe_delete")
     @patch("datamover.purger.process_files_for_deletion.select_files_to_delete")
     def test_some_deletions_fail_with_deletevalidationerror(
-            self,
-            mock_select_files: MagicMock,
-            mock_safe_delete: MagicMock,
-            mock_fs: MagicMock,
-            caplog: pytest.LogCaptureFixture,
+        self,
+        mock_select_files: MagicMock,
+        mock_safe_delete: MagicMock,
+        mock_fs: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test when some deletions fail with DeleteValidationError."""
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -195,19 +193,16 @@ class TestProcessFilesForDeletion:
 
         # Check the final deletion summary uses human-readable format
         readable_total = format_size_human_readable(expected_bytes_deleted)
-        assert (
-                f"Actually deleted {readable_total} from {DIR_DESC}."
-                in caplog.text
-        )
+        assert f"Actually deleted {readable_total} from {DIR_DESC}." in caplog.text
 
     @patch("datamover.purger.process_files_for_deletion.safe_delete")
     @patch("datamover.purger.process_files_for_deletion.select_files_to_delete")
     def test_some_deletions_fail_with_other_exception(
-            self,
-            mock_select_files: MagicMock,
-            mock_safe_delete: MagicMock,
-            mock_fs: MagicMock,
-            caplog: pytest.LogCaptureFixture,
+        self,
+        mock_select_files: MagicMock,
+        mock_safe_delete: MagicMock,
+        mock_fs: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test when some deletions fail with a generic Exception."""
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -251,19 +246,16 @@ class TestProcessFilesForDeletion:
 
         # Check the final deletion summary uses human-readable format
         readable_total = format_size_human_readable(expected_bytes_deleted)
-        assert (
-                f"Actually deleted {readable_total} from {DIR_DESC}."
-                in caplog.text
-        )
+        assert f"Actually deleted {readable_total} from {DIR_DESC}." in caplog.text
 
     @patch("datamover.purger.process_files_for_deletion.safe_delete")
     @patch("datamover.purger.process_files_for_deletion.select_files_to_delete")
     def test_no_bytes_deleted_when_all_safe_delete_fail(
-            self,
-            mock_select_files: MagicMock,
-            mock_safe_delete: MagicMock,
-            mock_fs: MagicMock,
-            caplog: pytest.LogCaptureFixture,
+        self,
+        mock_select_files: MagicMock,
+        mock_safe_delete: MagicMock,
+        mock_fs: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test that if all deletions fail, 0 bytes are reported deleted."""
         caplog.set_level(logging.WARNING, logger=SUT_LOGGER_NAME)
