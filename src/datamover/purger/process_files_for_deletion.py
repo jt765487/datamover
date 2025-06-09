@@ -5,18 +5,18 @@ from typing import List
 from datamover.file_functions.fs_mock import FS
 from datamover.file_functions.gather_entry_data import GatheredEntryData
 from datamover.file_functions.safe_delete import safe_delete, DeleteValidationError
+from datamover.purger.format_size_human_readable import format_size_human_readable
 from datamover.purger.select_files_to_delete import select_files_to_delete
-from tests.unit.purger.format_size_human_readable import format_size_human_readable
 
 logger = logging.getLogger(__name__)
 
 
 def process_files_for_deletion(
-    *,
-    files_to_consider: List[GatheredEntryData],
-    fs: FS,
-    directory_description: str,
-    target_bytes_to_keep: int,
+        *,
+        files_to_consider: List[GatheredEntryData],
+        fs: FS,
+        directory_description: str,
+        target_bytes_to_keep: int,
 ) -> int:
     """Selects and attempts to delete files from a given list."""
     if not files_to_consider:

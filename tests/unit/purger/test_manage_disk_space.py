@@ -5,8 +5,8 @@ from unittest.mock import patch, MagicMock, call
 import pytest
 
 from datamover.file_functions.gather_entry_data import GatheredEntryData
+from datamover.purger.format_size_human_readable import format_size_human_readable
 from datamover.purger.manage_disk_space import manage_disk_space
-from tests.unit.purger.format_size_human_readable import format_size_human_readable
 
 
 # Helper to create GatheredEntryData instances for tests
@@ -37,12 +37,12 @@ class TestManageDiskSpace:
     @patch("datamover.purger.manage_disk_space.process_files_for_deletion")
     @patch("datamover.purger.manage_disk_space.scan_and_sort_files")
     def test_both_scans_fail(
-        self,
-        mock_scan: MagicMock,
-        mock_process: MagicMock,
-        mock_fs: MagicMock,
-        mock_paths: tuple[Path, Path],
-        caplog: pytest.LogCaptureFixture,
+            self,
+            mock_scan: MagicMock,
+            mock_process: MagicMock,
+            mock_fs: MagicMock,
+            mock_paths: tuple[Path, Path],
+            caplog: pytest.LogCaptureFixture,
     ):
         work_dir, uploaded_dir = mock_paths
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -71,12 +71,12 @@ class TestManageDiskSpace:
     @patch("datamover.purger.manage_disk_space.process_files_for_deletion")
     @patch("datamover.purger.manage_disk_space.scan_and_sort_files")
     def test_both_dirs_empty_scans_ok(
-        self,
-        mock_scan: MagicMock,
-        mock_process: MagicMock,
-        mock_fs: MagicMock,
-        mock_paths: tuple[Path, Path],
-        caplog: pytest.LogCaptureFixture,
+            self,
+            mock_scan: MagicMock,
+            mock_process: MagicMock,
+            mock_fs: MagicMock,
+            mock_paths: tuple[Path, Path],
+            caplog: pytest.LogCaptureFixture,
     ):
         work_dir, uploaded_dir = mock_paths
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -91,8 +91,8 @@ class TestManageDiskSpace:
             target_disk_usage_percent=0.8,
         )
         assert (
-            "Both directories successfully scanned and are empty. No files to manage."
-            in caplog.text
+                "Both directories successfully scanned and are empty. No files to manage."
+                in caplog.text
         )
         mock_process.assert_not_called()
 
@@ -101,12 +101,12 @@ class TestManageDiskSpace:
         @patch("datamover.purger.manage_disk_space.process_files_for_deletion")
         @patch("datamover.purger.manage_disk_space.scan_and_sort_files")
         def test_disk_usage_within_target(
-            self,
-            mock_scan: MagicMock,
-            mock_process: MagicMock,
-            mock_fs: MagicMock,
-            mock_paths: tuple[Path, Path],
-            caplog: pytest.LogCaptureFixture,
+                self,
+                mock_scan: MagicMock,
+                mock_process: MagicMock,
+                mock_fs: MagicMock,
+                mock_paths: tuple[Path, Path],
+                caplog: pytest.LogCaptureFixture,
         ):
             work_dir, uploaded_dir = mock_paths
             caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -131,8 +131,8 @@ class TestManageDiskSpace:
                 target_disk_usage_percent=target_percent,
             )
             assert (
-                "Current disk usage is within target. No files need to be deleted."
-                in caplog.text
+                    "Current disk usage is within target. No files need to be deleted."
+                    in caplog.text
             )
             mock_process.assert_not_called()
 
@@ -140,12 +140,12 @@ class TestManageDiskSpace:
         @patch("datamover.purger.manage_disk_space.process_files_for_deletion")
         @patch("datamover.purger.manage_disk_space.scan_and_sort_files")
         def test_delete_from_uploaded_only_meets_target(
-            self,
-            mock_scan: MagicMock,
-            mock_process: MagicMock,
-            mock_fs: MagicMock,
-            mock_paths: tuple[Path, Path],
-            caplog: pytest.LogCaptureFixture,
+                self,
+                mock_scan: MagicMock,
+                mock_process: MagicMock,
+                mock_fs: MagicMock,
+                mock_paths: tuple[Path, Path],
+                caplog: pytest.LogCaptureFixture,
         ):
             work_dir, uploaded_dir = mock_paths
             caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -163,7 +163,7 @@ class TestManageDiskSpace:
             bytes_to_delete = 1500
 
             mock_process.return_value = (
-                UPLOADED_FILE_1.size + UPLOADED_FILE_2.size
+                    UPLOADED_FILE_1.size + UPLOADED_FILE_2.size
             )  # 1500
 
             manage_disk_space(
@@ -193,12 +193,12 @@ class TestManageDiskSpace:
     @patch("datamover.purger.manage_disk_space.process_files_for_deletion")
     @patch("datamover.purger.manage_disk_space.scan_and_sort_files")
     def test_delete_from_uploaded_and_work_meets_target(
-        self,
-        mock_scan: MagicMock,
-        mock_process: MagicMock,
-        mock_fs: MagicMock,
-        mock_paths: tuple[Path, Path],
-        caplog: pytest.LogCaptureFixture,
+            self,
+            mock_scan: MagicMock,
+            mock_process: MagicMock,
+            mock_fs: MagicMock,
+            mock_paths: tuple[Path, Path],
+            caplog: pytest.LogCaptureFixture,
     ):
         work_dir, uploaded_dir = mock_paths
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -257,19 +257,19 @@ class TestManageDiskSpace:
         assert expected_log in caplog.text
         bytes_still_needing_deletion = bytes_to_delete - bytes_deleted_from_uploaded
         assert (
-            f"Still need to delete {format_size_human_readable(bytes_still_needing_deletion)}"
-            in caplog.text
+                f"Still need to delete {format_size_human_readable(bytes_still_needing_deletion)}"
+                in caplog.text
         )
 
     @patch("datamover.purger.manage_disk_space.process_files_for_deletion")
     @patch("datamover.purger.manage_disk_space.scan_and_sort_files")
     def test_deletion_needed_but_not_enough_files_to_reach_target(
-        self,
-        mock_scan: MagicMock,
-        mock_process: MagicMock,
-        mock_fs: MagicMock,
-        mock_paths: tuple[Path, Path],
-        caplog: pytest.LogCaptureFixture,
+            self,
+            mock_scan: MagicMock,
+            mock_process: MagicMock,
+            mock_fs: MagicMock,
+            mock_paths: tuple[Path, Path],
+            caplog: pytest.LogCaptureFixture,
     ):
         work_dir, uploaded_dir = mock_paths
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -360,12 +360,12 @@ class TestManageDiskSpace:
     @patch("datamover.purger.manage_disk_space.process_files_for_deletion")
     @patch("datamover.purger.manage_disk_space.scan_and_sort_files")
     def test_deficit_remains_after_deletions(
-        self,
-        mock_scan: MagicMock,
-        mock_process: MagicMock,
-        mock_fs: MagicMock,
-        mock_paths: tuple[Path, Path],
-        caplog: pytest.LogCaptureFixture,
+            self,
+            mock_scan: MagicMock,
+            mock_process: MagicMock,
+            mock_fs: MagicMock,
+            mock_paths: tuple[Path, Path],
+            caplog: pytest.LogCaptureFixture,
     ):
         work_dir, uploaded_dir = mock_paths
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -417,12 +417,12 @@ class TestManageDiskSpace:
     @patch("datamover.purger.manage_disk_space.process_files_for_deletion")
     @patch("datamover.purger.manage_disk_space.scan_and_sort_files")
     def test_zero_disk_capacity(
-        self,
-        mock_scan: MagicMock,
-        mock_process: MagicMock,
-        mock_fs: MagicMock,
-        mock_paths: tuple[Path, Path],
-        caplog: pytest.LogCaptureFixture,
+            self,
+            mock_scan: MagicMock,
+            mock_process: MagicMock,
+            mock_fs: MagicMock,
+            mock_paths: tuple[Path, Path],
+            caplog: pytest.LogCaptureFixture,
     ):
         work_dir, uploaded_dir = mock_paths
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -460,19 +460,19 @@ class TestManageDiskSpace:
         )
         final_estimated = 1000 - 1000  # 0
         assert (
-            f"Estimated current disk usage: {final_estimated} bytes (total capacity was zero or not provided)."
-            in caplog.text
+                f"Estimated current disk usage: {final_estimated} bytes (total capacity was zero or not provided)."
+                in caplog.text
         )
 
     @patch("datamover.purger.manage_disk_space.process_files_for_deletion")
     @patch("datamover.purger.manage_disk_space.scan_and_sort_files")
     def test_deletion_needed_but_work_dir_empty(
-        self,
-        mock_scan: MagicMock,
-        mock_process: MagicMock,
-        mock_fs: MagicMock,
-        mock_paths: tuple[Path, Path],
-        caplog: pytest.LogCaptureFixture,
+            self,
+            mock_scan: MagicMock,
+            mock_process: MagicMock,
+            mock_fs: MagicMock,
+            mock_paths: tuple[Path, Path],
+            caplog: pytest.LogCaptureFixture,
     ):
         work_dir, uploaded_dir = mock_paths
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
@@ -512,8 +512,8 @@ class TestManageDiskSpace:
         # bytes_still_needing_deletion = 500 - 0 = 500
         # work_files_sorted is empty
         assert (
-            "Still need to delete 500 bytes, but no files available in work directory."
-            in caplog.text
+                "Still need to delete 500 bytes, but no files available in work directory."
+                in caplog.text
         )
         # Deficit check:
         # final_estimated_used_space_bytes = 1000 - 0 = 1000
@@ -527,12 +527,12 @@ class TestManageDiskSpace:
     @patch("datamover.purger.manage_disk_space.process_files_for_deletion")
     @patch("datamover.purger.manage_disk_space.scan_and_sort_files")
     def test_one_scan_fails_other_succeeds_and_deletes(
-        self,
-        mock_scan: MagicMock,
-        mock_process: MagicMock,
-        mock_fs: MagicMock,
-        mock_paths: tuple[Path, Path],
-        caplog: pytest.LogCaptureFixture,
+            self,
+            mock_scan: MagicMock,
+            mock_process: MagicMock,
+            mock_fs: MagicMock,
+            mock_paths: tuple[Path, Path],
+            caplog: pytest.LogCaptureFixture,
     ):
         work_dir, uploaded_dir = mock_paths
         caplog.set_level(logging.INFO, logger=SUT_LOGGER_NAME)
