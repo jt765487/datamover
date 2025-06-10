@@ -3,7 +3,7 @@
 # uninstall_exportcliv2_suite.sh
 # Uninstalls the ExportCLIv2 application suite.
 # WARNING: This script performs destructive operations. Review carefully.
-# Version: 1.1.0 (Refined instance discovery, bin dir cleanup)
+# Version: 1.0.3 (Refined instance discovery, bin dir cleanup)
 
 # --- Colorized Logging ---
 CSI=$'\033['

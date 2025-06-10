@@ -1,6 +1,6 @@
 [project]
 name = "datamover"
-version = "1.0.2"
+version = "1.0.3"
 description = "Bitmover application to monitor CSV hash files and upload PCAP files to a remote NiFi server"
 readme = "README.md"
 authors = [
