@@ -1,4 +1,4 @@
-## Application Suite Deployment and Management Guide (v1.0.0)
+## Application Suite Deployment and Management Guide (v1.0.4)
 
 This guide provides comprehensive instructions for deploying, configuring, updating, and managing the "exportcliv2"
 application suite (v1.0.0). This suite includes the main `exportcliv2` data export client and the Bitmover service (a
@@ -820,12 +820,12 @@ move_poll_interval_seconds = 0.5
 scanner_check_seconds = 15.0
 
 # How long (in seconds) to wait for a file to be considered "lost" and moved to the worker directory.
-# This should be two cycles longer than the pcap file generation rate + 1 second.
-lost_timeout_seconds = 46.0
+# This should be long enough to let the hash be generated too fast and it will be marked lost while it is still being worked on.
+lost_timeout_seconds = 301.0
 
 # How long (in seconds) to wait for a file to be considered "broken" (e.g., if it is still being written to).
-# This should be greater than the pcap file generation rate - three cycles + 1 second.
-stuck_active_file_timeout_seconds = 61.0
+# This should be greater than the pcap file generation rate - at least one cycle longer than lost_timeout_seconds.
+stuck_active_file_timeout_seconds = 361.0
 
 [Tailer]
 # How often (in seconds) to check the exit - leave at the default of 0.5 seconds.
