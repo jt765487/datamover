@@ -3,7 +3,7 @@
 # uninstall_exportcliv2_suite.sh
 # Uninstalls the ExportCLIv2 application suite.
 # WARNING: This script performs destructive operations. Review carefully.
-#
+# Version: 1.1.0 (Refined instance discovery, bin dir cleanup)
 
 # --- Colorized Logging ---
 CSI=$'\033['
@@ -27,6 +27,9 @@ BASE_VARS_FILE="/etc/default/${APP_NAME_FOR_BASE_VARS_LOOKUP}_base_vars"
 APP_NAME="" # Will be sourced
 ETC_DIR=""
 BASE_DIR=""
+# These will be sourced, declare them to avoid unbound variable errors if set -u is active elsewhere
+APP_USER=""
+APP_GROUP=""
 PYTHON_VENV_PATH=""
 SYMLINK_EXECUTABLE_PATH=""
 DEST_VERSIONED_APP_BINARY_PATH=""
@@ -36,8 +39,9 @@ CSV_DATA_DIR=""
 WORKER_DATA_DIR=""
 UPLOADED_DATA_DIR=""
 DEAD_LETTER_DATA_DIR=""
-BITMOVER_SERVICE_NAME="bitmover.service" # Usually fixed, but good to have as var
-ORCHESTRATOR_LOCK_FILE="/tmp/deploy_orchestrator.lock"
+
+BITMOVER_SERVICE_NAME="bitmover.service" # Usually fixed
+ORCHESTRATOR_LOCK_FILE="/tmp/deploy_orchestrator.lock" # As per deploy_orchestrator.sh
 
 REMOVE_DATA_DIRS=false
 REMOVE_LOG_DIRS=false
@@ -52,12 +56,12 @@ run_and_warn() {
     if [[ $ec -ne 0 ]]; then
         warn "Command failed with exit code $ec: $cmd_display"
     fi
-    return $ec # Return original exit code, though script won't exit on it
+    return $ec
 }
 
 # --- Main Script Logic ---
 main() {
-    info "Starting ExportCLIv2 Application Suite Uninstallation..."
+    info "Starting ExportCLIv2 Application Suite Uninstallation (v1.1.0)..."
 
     if [[ "$(id -u)" -ne 0 ]]; then
         error_msg "This script must be run as root or with sudo."
@@ -69,7 +73,7 @@ main() {
         info "Loading installation variables from $BASE_VARS_FILE..."
         # shellcheck source=/dev/null
         source "$BASE_VARS_FILE"
-        # Override APP_NAME_FOR_BASE_VARS_LOOKUP if APP_NAME is set in the file
+        # Update APP_NAME_FOR_BASE_VARS_LOOKUP if APP_NAME is defined in the file
         APP_NAME_FOR_BASE_VARS_LOOKUP="${APP_NAME:-$APP_NAME_FOR_BASE_VARS_LOOKUP}"
         info "Using APP_NAME: ${APP_NAME:-<not set, using default for some paths>}"
         info "Using BASE_DIR: ${BASE_DIR:-<not set, cleanup may be incomplete>}"
@@ -125,10 +129,13 @@ main() {
 
     # --- 1. Stop and Disable Systemd Services ---
     info "--- Stopping and Disabling Systemd Services ---"
-    # Find instances - simple scan of ETC_DIR for *.conf files (excluding common.auth.conf and config.ini)
     local instance_conf_files
     if [[ -d "$ETC_DIR" ]]; then
-        instance_conf_files=$(find "$ETC_DIR" -maxdepth 1 -name "*.conf" ! -name "common.auth.conf" ! -name "config.ini" -print)
+        # Refined find: exclude common.auth.conf, config.ini, and *_app.conf
+        instance_conf_files=$(find "$ETC_DIR" -maxdepth 1 -type f -name "*.conf" \
+                                ! -name "common.auth.conf" \
+                                ! -name "config.ini" \
+                                ! -name "*_app.conf" -print)
     else
         instance_conf_files=""
         warn "Configuration directory $ETC_DIR not found, cannot identify instances for service stop/disable."
@@ -137,12 +144,16 @@ main() {
     for conf_file in $instance_conf_files; do
         local instance_name
         instance_name=$(basename "$conf_file" .conf)
+        if [[ -z "$instance_name" ]]; then
+            warn "Could not derive instance name from '$conf_file', skipping."
+            continue
+        fi
         info "Processing instance: $instance_name"
         run_and_warn systemctl stop "${APP_NAME}@${instance_name}.service"
         run_and_warn systemctl disable "${APP_NAME}@${instance_name}.service"
         run_and_warn systemctl stop "${APP_NAME}-restart@${instance_name}.path"
         run_and_warn systemctl disable "${APP_NAME}-restart@${instance_name}.path"
-        run_and_warn systemctl disable "${APP_NAME}-restart@${instance_name}.service" # Usually not enabled directly
+        run_and_warn systemctl disable "${APP_NAME}-restart@${instance_name}.service" # This might show "no installation config" - acceptable
     done
 
     info "Processing main Bitmover service: $BITMOVER_SERVICE_NAME"
@@ -171,56 +182,59 @@ main() {
         info "Removing configuration directory: $ETC_DIR"
         run_and_warn rm -rf "$ETC_DIR"
     else
-        warn "ETC_DIR is not set or is '/', skipping removal of config directory."
+        warn "ETC_DIR variable is not set or is '/', skipping removal of config directory."
     fi
 
     # Files/dirs within BASE_DIR
     if [[ -n "$BASE_DIR" && "$BASE_DIR" != "/" ]]; then # Safety check
-        info "Cleaning up within base application directory: $BASE_DIR"
-        if [[ -n "$DEST_VERSIONED_APP_BINARY_PATH" ]]; then
-             run_and_warn rm -f "$DEST_VERSIONED_APP_BINARY_PATH"
-        fi
-        if [[ -n "$SYMLINK_EXECUTABLE_PATH" ]]; then
-            run_and_warn rm -f "$SYMLINK_EXECUTABLE_PATH"
-        fi
-        if [[ -n "$INSTALLED_WRAPPER_SCRIPT_PATH" ]]; then
-            run_and_warn rm -f "$INSTALLED_WRAPPER_SCRIPT_PATH"
-        fi
-        if [[ -d "${BASE_DIR}/bin" ]]; then
-            run_and_warn rm -f "${BASE_DIR}/bin/manage_services.sh"
-            # Attempt to remove bin dir if empty, otherwise it's part of the later BASE_DIR removal
-            rmdir "${BASE_DIR}/bin" 2>/dev/null || \
-                info "Directory ${BASE_DIR}/bin not empty or error removing, will be handled with BASE_DIR removal if applicable."
-        fi
+        info "Cleaning up base application directory: $BASE_DIR"
 
-        if [[ -n "$PYTHON_VENV_PATH" && -d "$PYTHON_VENV_PATH" ]]; then
-            info "Removing Python virtual environment: $PYTHON_VENV_PATH"
-            run_and_warn rm -rf "$PYTHON_VENV_PATH"
-        fi
+        # If removing data, the whole BASE_DIR will be removed later, so specific file removals
+        # inside BASE_DIR become somewhat redundant but harmless.
+        # If NOT removing data, we need to be more surgical.
 
         if [[ "$REMOVE_DATA_DIRS" == true ]]; then
-            warn "REMOVING DATA DIRECTORIES as requested by user!"
-            if [[ -n "$SOURCE_DATA_DIR" && -d "$SOURCE_DATA_DIR" ]]; then run_and_warn rm -rf "$SOURCE_DATA_DIR"; fi
-            if [[ -n "$CSV_DATA_DIR" && -d "$CSV_DATA_DIR" ]]; then run_and_warn rm -rf "$CSV_DATA_DIR"; fi
-            if [[ -n "$WORKER_DATA_DIR" && -d "$WORKER_DATA_DIR" ]]; then run_and_warn rm -rf "$WORKER_DATA_DIR"; fi
-            if [[ -n "$UPLOADED_DATA_DIR" && -d "$UPLOADED_DATA_DIR" ]]; then run_and_warn rm -rf "$UPLOADED_DATA_DIR"; fi
-            if [[ -n "$DEAD_LETTER_DATA_DIR" && -d "$DEAD_LETTER_DATA_DIR" ]]; then run_and_warn rm -rf "$DEAD_LETTER_DATA_DIR"; fi
-        else
-            info "Preserving data directories (if they exist) inside $BASE_DIR."
-        fi
-
-        # Attempt to remove BASE_DIR if all contents (that we manage) are gone
-        # or if data/logs were also requested to be removed.
-        # This is a "best effort" if data/logs are preserved.
-        if [[ "$REMOVE_DATA_DIRS" == true ]]; then
-            info "Attempting to remove base application directory: $BASE_DIR"
+            warn "REMOVING ENTIRE BASE DIRECTORY (including data, logs, bin, venv) as requested by user: $BASE_DIR"
             run_and_warn rm -rf "$BASE_DIR"
         else
-            info "Base application directory $BASE_DIR will be preserved as data/logs were not flagged for removal."
-            info "You may need to manually remove $BASE_DIR if it's no longer needed and empty of preserved data."
+            info "Preserving data directories. Removing only specific application components from $BASE_DIR."
+            if [[ -n "$PYTHON_VENV_PATH" && -d "$PYTHON_VENV_PATH" ]]; then
+                info "Removing Python virtual environment: $PYTHON_VENV_PATH"
+                run_and_warn rm -rf "$PYTHON_VENV_PATH"
+            fi
+            if [[ -d "${BASE_DIR}/bin" ]]; then
+                info "Removing application binaries and scripts from ${BASE_DIR}/bin/"
+                if [[ -n "$DEST_VERSIONED_APP_BINARY_PATH" && -f "$DEST_VERSIONED_APP_BINARY_PATH" ]]; then
+                     run_and_warn rm -f "$DEST_VERSIONED_APP_BINARY_PATH"
+                fi
+                # Also attempt to remove what the symlink points to, if different or if base_vars was stale
+                if [[ -n "$SYMLINK_EXECUTABLE_PATH" && -L "$SYMLINK_EXECUTABLE_PATH" ]]; then
+                    local actual_binary_target
+                    actual_binary_target=$(readlink "$SYMLINK_EXECUTABLE_PATH")
+                    if [[ -n "$actual_binary_target" && -f "${BASE_DIR}/bin/${actual_binary_target}" ]]; then
+                        if [[ "${BASE_DIR}/bin/${actual_binary_target}" != "$DEST_VERSIONED_APP_BINARY_PATH" ]]; then
+                            info "Removing actual symlink target: ${BASE_DIR}/bin/${actual_binary_target}"
+                            run_and_warn rm -f "${BASE_DIR}/bin/${actual_binary_target}"
+                        fi
+                    fi
+                fi
+                if [[ -n "$SYMLINK_EXECUTABLE_PATH" ]]; then
+                    run_and_warn rm -f "$SYMLINK_EXECUTABLE_PATH"
+                fi
+                if [[ -n "$INSTALLED_WRAPPER_SCRIPT_PATH" ]]; then
+                    run_and_warn rm -f "$INSTALLED_WRAPPER_SCRIPT_PATH"
+                fi
+                run_and_warn rm -f "${BASE_DIR}/bin/manage_services.sh"
+
+                # Attempt to remove bin dir if empty
+                rmdir "${BASE_DIR}/bin" 2>/dev/null || \
+                    info "Directory ${BASE_DIR}/bin not empty or error removing. This is okay if data/other files are preserved."
+            fi
+            info "Base application directory $BASE_DIR has had components removed. Data subdirectories (source, csv, etc.) are preserved."
+            info "You may need to manually remove $BASE_DIR if it's no longer needed and contains only preserved data."
         fi
     else
-        warn "BASE_DIR is not set or is '/', skipping removal of base application directory."
+        warn "BASE_DIR variable is not set or is '/', skipping removal of base application directory."
     fi
 
     # Log directory
@@ -253,4 +267,4 @@ main() {
 # --- Script Entry ---
 main "$@"
 
-exit 0 # Exit cleanly, relies on user to check logs for any specific step failures.
+exit 0 # Exit cleanly, user reviews logs for step failures.
