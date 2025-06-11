@@ -75,7 +75,7 @@ class TestProcessFilesForDeletion:
         assert (
             f"Selected 0 files from {DIR_DESC} for potential deletion." in caplog.text
         )
-        assert f"Actually deleted" not in caplog.text
+        assert "Actually deleted" not in caplog.text
 
     @patch("datamover.purger.process_files_for_deletion.safe_delete")
     @patch("datamover.purger.process_files_for_deletion.select_files_to_delete")

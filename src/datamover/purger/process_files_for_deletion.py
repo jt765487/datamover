@@ -12,11 +12,11 @@ logger = logging.getLogger(__name__)
 
 
 def process_files_for_deletion(
-        *,
-        files_to_consider: List[GatheredEntryData],
-        fs: FS,
-        directory_description: str,
-        target_bytes_to_keep: int,
+    *,
+    files_to_consider: List[GatheredEntryData],
+    fs: FS,
+    directory_description: str,
+    target_bytes_to_keep: int,
 ) -> int:
     """Selects and attempts to delete files from a given list."""
     if not files_to_consider:
