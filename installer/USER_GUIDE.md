@@ -1,4 +1,4 @@
-## Application Suite Deployment and Management Guide (v1.0.4)
+## Application Suite Deployment and Management Guide (v1.0.5)
 
 This guide provides comprehensive instructions for deploying, configuring, updating, and managing the "exportcliv2"
 application suite (v1.0.0). This suite includes the main `exportcliv2` data export client and the Bitmover service (a

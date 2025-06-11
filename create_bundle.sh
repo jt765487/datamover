@@ -361,6 +361,7 @@ declare -A expected_bundle_contents=(
     ["${DEPLOY_SUBDIR_NAME}/install_base_exportcliv2.sh"]="file"
     ["${DEPLOY_SUBDIR_NAME}/configure_instance.sh"]="file"
     ["${DEPLOY_SUBDIR_NAME}/manage_services.sh"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/uninstall.sh"]="file"
     ["${DEPLOY_SUBDIR_NAME}/install-app.conf"]="file"
     ["${DEPLOY_SUBDIR_NAME}/${DATAMOVER_WHEEL_FILENAME}"]="file"
     ["${DEPLOY_SUBDIR_NAME}/config_files"]="dir"

@@ -1,4 +1,4 @@
-## README: exportcliv2 Application Suite (v1.0.4)
+## README: exportcliv2 Application Suite (v1.0.5)
 
 This guide walks you through installing the `exportcliv2` application suite, which includes the `exportcliv2` data
 export client and the Bitmover service (responsible for PCAP uploads and disk space management).

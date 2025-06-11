@@ -62,7 +62,7 @@ if [[ ! -f "${EXPORT_APP_CONFIG_FILE_PATH}" ]]; then
 fi
 
 # --- Construct paths and arguments ---
-CSV_INSTANCE_DIR="{{CSV_DATA_DIR}}"
+CSV_INSTANCE_DIR="{{CSV_DATA_DIR}}/${INSTANCE_NAME}"
 SOURCE_INSTANCE_PATH="{{SOURCE_DATA_DIR}}/${EXPORT_SOURCE}"
 
 # Build the argument list in an array for robustness and clarity.
