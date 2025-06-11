@@ -2,7 +2,8 @@
 set -euo pipefail
 IFS=$'\n\t' # For safe looping over find results, though find -print0 is preferred.
 
-# Script V1.0 to create a distributable bundle for the exportcliv2 suite.
+# Script V1.1 to create a distributable bundle for the exportcliv2 suite.
+# V1.1: Removed Python dependency for pyproject.toml version parsing.
 
 # --- Default Configuration (relative to script's location if not overridden) ---
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -15,6 +16,7 @@ OFFLINE_WHEELS_SOURCE_DIR_DEFAULT="${PROJECT_ROOT_DIR}/offline_package/wheels"
 PYPROJECT_TOML_PATH="${PROJECT_ROOT_DIR}/pyproject.toml"
 STAGING_DIR_NAME="_release_staging" # Name of the top-level staging directory
 PATCH_SCRIPT_NAME="install_patch.sh" # Name of the patch script within the installer source
+UNINSTALL_SCRIPT_NAME="uninstall.sh" # Name of the uninstall script
 
 SCRIPT_NAME=$(basename "$0")
 VERBOSE_BUNDLE_SCRIPT=false
@@ -47,7 +49,7 @@ Arguments & Options:
   --emulator-binary <PATH>     Path to an alternative/emulator 'exportcliv2' binary.
                                  (Optional, for inclusion in the package).
   -r, --release-version VERSION  Optional: Explicitly set the release version for the bundle.
-                                 If not set, attempts to read from '$PYPROJECT_TOML_PATH'.
+                                 If not set, attempts to read from '$PYPROJECT_TOML_PATH' using grep/sed.
   -k, --keep-staging             Optional: Do not delete the staging directory after bundling.
   --offline-wheels-dir DIR       Optional: Override the directory for offline Python dependency wheels.
                                  Default: '${OFFLINE_WHEELS_SOURCE_DIR_DEFAULT}'
@@ -68,6 +70,7 @@ Requirements:
   - '$PYPROJECT_TOML_PATH' should exist if --release-version is not specified.
   - Key installer scripts must exist (e.g., in '${INSTALLER_SOURCE_DIR}/exportcliv2-deploy/').
   - The '${PATCH_SCRIPT_NAME}' must exist (e.g., in '${INSTALLER_SOURCE_DIR}/').
+  - The '${UNINSTALL_SCRIPT_NAME}' must exist (e.g., in '${INSTALLER_SOURCE_DIR}/exportcliv2-deploy/').
   - The README.md file must exist at its specified source path.
 EOF
 }
@@ -126,24 +129,39 @@ fi
 
 # --- Determine Release Version ---
 if [[ -z "$RELEASE_VERSION" ]]; then
-  info "Attempting to determine release version from '$PYPROJECT_TOML_PATH'..."
+  info "Attempting to determine release version from '$PYPROJECT_TOML_PATH' using grep/awk/sed..."
   if [[ ! -f "$PYPROJECT_TOML_PATH" ]]; then
     error_exit "Cannot determine version: '$PYPROJECT_TOML_PATH' not found and --release-version not specified."
   fi
-  # Using Python for more robust TOML parsing if available, otherwise fallback to grep/sed
-  if command -v python3 &> /dev/null; then
-    PYPROJECT_VERSION=$(python3 -c "import tomllib; pyproject_path='$PYPROJECT_TOML_PATH'; data=tomllib.load(open(pyproject_path, 'rb')); print(data.get('project', {}).get('version', ''))" 2>/dev/null)
+
+  PYPROJECT_VERSION=""
+  # Try to extract version from [project] table (PEP 621)
+  # awk: find line starting with [project]. Set flag p=1. On next lines, if p=1 and line matches version pattern, extract and print version, then exit awk.
+  # If another section like [foo] starts, reset flag p=0.
+  PYPROJECT_VERSION=$(awk '/^\[project\]/{p=1;next} /^\[tool\.poetry\]/{p=0;next} /^\[/{p=0} p && /^\s*version\s*=\s*"/ {gsub(/^.*version\s*=\s*"|"$/,""); print; exit}' "$PYPROJECT_TOML_PATH")
+
+  # If not found, try under [tool.poetry] (for Poetry projects)
+  if [[ -z "$PYPROJECT_VERSION" ]]; then
+    debug_bundle "Version not found under [project] in '$PYPROJECT_TOML_PATH'. Trying [tool.poetry]..."
+    PYPROJECT_VERSION=$(awk '/^\[tool\.poetry\]/{p=1;next} /^\[project\]/{p=0;next} /^\[/{p=0} p && /^\s*version\s*=\s*"/ {gsub(/^.*version\s*=\s*"|"$/,""); print; exit}' "$PYPROJECT_TOML_PATH")
   fi
-  if [[ -z "$PYPROJECT_VERSION" ]]; then # Fallback or if python parsing failed
-    warn "Python TOML parsing failed or Python not available, falling back to grep/sed for version."
-    PYPROJECT_VERSION=$(grep -E "^\s*version\s*=\s*\"[^\"]+\"" "$PYPROJECT_TOML_PATH" | sed -E 's/^\s*version\s*=\s*"([^"]+)"\s*$/\1/' | head -n 1)
+
+  # If still not found, try a more general grep/sed as a last resort
+  # This is less specific and might pick up other "version" lines if they exist.
+  if [[ -z "$PYPROJECT_VERSION" ]]; then
+    debug_bundle "Version not found under [tool.poetry] in '$PYPROJECT_TOML_PATH'. Trying general grep..."
+    # The subshell with `|| echo ""` ensures that if grep finds nothing, PYPROJECT_VERSION becomes empty
+    # instead of the script exiting due to `set -e` and `pipefail`.
+    PYPROJECT_VERSION=$( (grep -E "^\s*version\s*=\s*\"[^\"]+\"" "$PYPROJECT_TOML_PATH" | \
+                         sed -E 's/^\s*version\s*=\s*"([^"]+)"\s*$/\1/' | \
+                         head -n 1) || echo "" )
   fi
 
   if [[ -z "$PYPROJECT_VERSION" ]]; then
-    error_exit "Could not automatically determine version from '$PYPROJECT_TOML_PATH'. Use --release-version."
+    error_exit "Could not automatically determine version from '$PYPROJECT_TOML_PATH' using grep/awk/sed. Use --release-version or ensure 'version = \"x.y.z\"' is present in a recognized location (e.g., under [project] or [tool.poetry])."
   fi
   RELEASE_VERSION="$PYPROJECT_VERSION"
-  info "Using release version from pyproject.toml: $RELEASE_VERSION"
+  info "Using release version from pyproject.toml (via grep/awk/sed): $RELEASE_VERSION"
 else
   info "Using release version from command line: $RELEASE_VERSION"
 fi
@@ -208,6 +226,10 @@ PATCH_SCRIPT_SOURCE="${EFFECTIVE_INSTALLER_SOURCE_DIR}/${PATCH_SCRIPT_NAME}" # A
 if [[ ! -f "$PATCH_SCRIPT_SOURCE" ]]; then
   error_exit "Patch script '${PATCH_SCRIPT_NAME}' not found at: $PATCH_SCRIPT_SOURCE"
 fi
+UNINSTALL_SCRIPT_SOURCE_PATH="${EFFECTIVE_INSTALLER_SOURCE_DIR}/${DEPLOY_SUBDIR_NAME}/${UNINSTALL_SCRIPT_NAME}"
+if [[ ! -f "$UNINSTALL_SCRIPT_SOURCE_PATH" ]]; then
+  error_exit "Uninstall script '${UNINSTALL_SCRIPT_NAME}' not found at its source: $UNINSTALL_SCRIPT_SOURCE_PATH"
+fi
 if [[ ! -f "$EFFECTIVE_README_SOURCE_FILE" ]]; then error_exit "README.md not found at: $EFFECTIVE_README_SOURCE_FILE"; fi
 if [[ -f "${EFFECTIVE_INSTALLER_SOURCE_DIR}/USER_GUIDE.md" ]]; then
   info "USER_GUIDE.md found in installer source directory."
@@ -257,6 +279,9 @@ cp "$DEPLOY_ORCHESTRATOR_SOURCE" "${STAGING_BUNDLE_ROOT}/${DEPLOY_ORCHESTRATOR_S
 info "Copying '${PATCH_SCRIPT_NAME}' to bundle root '${STAGING_BUNDLE_ROOT}'..."
 cp "$PATCH_SCRIPT_SOURCE" "${STAGING_BUNDLE_ROOT}/${PATCH_SCRIPT_NAME}"
 
+info "Copying '${UNINSTALL_SCRIPT_NAME}' from '${UNINSTALL_SCRIPT_SOURCE_PATH}' to bundle root '${STAGING_BUNDLE_ROOT}'..."
+cp "$UNINSTALL_SCRIPT_SOURCE_PATH" "${STAGING_BUNDLE_ROOT}/${UNINSTALL_SCRIPT_NAME}"
+
 info "Copying README.md to bundle root '${STAGING_BUNDLE_ROOT}'..."
 cp "$EFFECTIVE_README_SOURCE_FILE" "${STAGING_BUNDLE_ROOT}/README.md"
 
@@ -268,6 +293,7 @@ fi
 info "Copying remaining '${DEPLOY_SUBDIR_NAME}' contents from '${EFFECTIVE_INSTALLER_SOURCE_DIR}/${DEPLOY_SUBDIR_NAME}/' to '${STAGED_DEPLOY_SUBDIR}'..."
 rsync -av --checksum \
   --exclude="${DEPLOY_ORCHESTRATOR_SOURCE_NAME}" \
+  --exclude="${UNINSTALL_SCRIPT_NAME}" \
   --exclude="*~" \
   --exclude="*.bak" \
   --exclude="*-org.sh" \
@@ -304,30 +330,24 @@ update_or_append_config() {
     local value="$2"
     local config_file="$3"
     local temp_file_suffix="_update_config_temp"
-    # Ensure temp_file is in a writable location, preferably the same dir as config_file to avoid mv across filesystems
     local temp_file
     temp_file=$(mktemp "${config_file}${temp_file_suffix}.XXXXXX")
 
     cp "$config_file" "$temp_file"
-    # Using # as sed delimiter to handle potential slashes in value, though value is quoted here.
-    # Ensure that `value` itself doesn't contain the delimiter used by sed.
-    # Since `value` is double-quoted by the caller, internal double quotes would need careful handling if allowed.
     if grep -q -E "^\s*${key}\s*=" "$temp_file"; then
         sed -E "s#^(\s*${key}\s*=\s*).*#\1${value}#" "$temp_file" > "$config_file"
         debug_bundle "Updated '$key' in $config_file."
     else
         info "Key '$key' not found, appending '$key=${value}' to $config_file."
-        # Ensure newline if appending to a file that might not end with one
         if [[ $(tail -c1 "$config_file" | wc -l) -eq 0 && -s "$config_file" ]]; then echo >> "$config_file"; fi
         echo "${key}=${value}" >> "$config_file"
     fi
     rm "$temp_file"
 }
 
-# Ensure filenames with spaces or special characters are handled by quoting them for the INI file
 CONFIGURED_APP_BINARY_REPLACEMENT_VALUE="\"$CONFIGURED_APP_BINARY_FILENAME\""
 DATAMOVER_WHEEL_REPLACEMENT_VALUE="\"$DATAMOVER_WHEEL_FILENAME\""
-WHEELHOUSE_SUBDIR_REPLACEMENT_VALUE="\"${WHEELHOUSE_TARGET_SUBDIR_NAME}\"" # Should be simple, but quote for consistency
+WHEELHOUSE_SUBDIR_REPLACEMENT_VALUE="\"${WHEELHOUSE_TARGET_SUBDIR_NAME}\""
 
 update_or_append_config "VERSIONED_APP_BINARY_FILENAME" "$CONFIGURED_APP_BINARY_REPLACEMENT_VALUE" "$STAGED_INSTALL_APP_CONF"
 update_or_append_config "VERSIONED_DATAMOVER_WHEEL_FILENAME" "$DATAMOVER_WHEEL_REPLACEMENT_VALUE" "$STAGED_INSTALL_APP_CONF"
@@ -337,7 +357,6 @@ info "Staged install-app.conf processed."
 
 # --- Set Script Permissions ---
 info "Setting executable permissions for .sh files and binaries in the bundle..."
-# Use -print0 and xargs -0 for safety with filenames
 find "${STAGING_BUNDLE_ROOT}" -maxdepth 1 -type f -name "*.sh" -print0 | xargs -0 -I {} chmod +x {}
 find "${STAGED_DEPLOY_SUBDIR}" -type f -name "*.sh" -print0 | xargs -0 -I {} chmod +x {}
 
@@ -352,16 +371,15 @@ info "Executable permissions set."
 # --- Comprehensive File Check in Staging Area ---
 info "Verifying contents of the staged bundle at '${STAGING_BUNDLE_ROOT}'..."
 all_files_ok=true
-# This list should match the expected bundle structure from USER_GUIDE.md and installer needs.
 declare -A expected_bundle_contents=(
-    ["${DEPLOY_ORCHESTRATOR_SOURCE_NAME}"]="file" # In bundle root
-    ["${PATCH_SCRIPT_NAME}"]="file"               # In bundle root
-    ["README.md"]="file"                          # In bundle root
-    # USER_GUIDE.md is optional, checked separately if present
+    ["${DEPLOY_ORCHESTRATOR_SOURCE_NAME}"]="file"
+    ["${PATCH_SCRIPT_NAME}"]="file"
+    ["${UNINSTALL_SCRIPT_NAME}"]="file" # uninstall.sh now in bundle root
+    ["README.md"]="file"
     ["${DEPLOY_SUBDIR_NAME}/install_base_exportcliv2.sh"]="file"
     ["${DEPLOY_SUBDIR_NAME}/configure_instance.sh"]="file"
     ["${DEPLOY_SUBDIR_NAME}/manage_services.sh"]="file"
-    ["${DEPLOY_SUBDIR_NAME}/uninstall.sh"]="file"
+    # uninstall.sh is no longer expected in DEPLOY_SUBDIR_NAME
     ["${DEPLOY_SUBDIR_NAME}/install-app.conf"]="file"
     ["${DEPLOY_SUBDIR_NAME}/${DATAMOVER_WHEEL_FILENAME}"]="file"
     ["${DEPLOY_SUBDIR_NAME}/config_files"]="dir"
@@ -376,7 +394,7 @@ declare -A expected_bundle_contents=(
     ["${DEPLOY_SUBDIR_NAME}/${WHEELHOUSE_TARGET_SUBDIR_NAME}"]="dir"
 )
 if [[ -f "${EFFECTIVE_INSTALLER_SOURCE_DIR}/USER_GUIDE.md" ]]; then
-  expected_bundle_contents["USER_GUIDE.md"]="file" # Add to check if it was supposed to be copied
+  expected_bundle_contents["USER_GUIDE.md"]="file"
 fi
 expected_bundle_contents["${DEPLOY_SUBDIR_NAME}/${PRODUCTION_BINARY_FILENAME}"]="file"
 if [[ -n "$EMULATOR_BINARY_FILENAME" ]]; then
@@ -399,18 +417,14 @@ for item_path_rel_to_bundle_root in "${!expected_bundle_contents[@]}"; do
     fi
 done
 
-# Specific check for wheelhouse contents if it was expected to have wheels
 if [[ "$all_files_ok" == true && -d "${STAGED_WHEELHOUSE_DIR}" ]]; then
-    # Check if source had wheels
     source_had_wheels=false
     if ls "${EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR}"/*.whl &> /dev/null; then
         source_had_wheels=true
     fi
-
     if [[ "$source_had_wheels" == true ]]; then
         if ! ls "${STAGED_WHEELHOUSE_DIR}"/*.whl &> /dev/null; then
             warn "Bundle Verification WARNING: Wheelhouse dir '${STAGED_WHEELHOUSE_DIR}' is empty, but source '${EFFECTIVE_OFFLINE_WHEELS_SOURCE_DIR}' had wheels."
-            # Depending on strictness, this could set all_files_ok=false
         else
             debug_bundle "Bundle Verification OK: Wheelhouse contains .whl files as expected."
         fi
@@ -425,7 +439,6 @@ fi
 
 # --- Create Tarball ---
 info "Creating tarball: ${ARCHIVE_NAME} in $(realpath "${PROJECT_ROOT_DIR}")"
-# Create tarball in the project root directory, not inside STAGING_DIR
 (
   cd "$STAGING_TOP_LEVEL_DIR" || { error_exit "Failed to cd into staging dir '$STAGING_TOP_LEVEL_DIR' for tar creation."; }
   tar -czf "${PROJECT_ROOT_DIR}/${ARCHIVE_NAME}" "$BUNDLE_TOP_DIR_NAME"
