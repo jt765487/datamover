@@ -262,13 +262,19 @@ create_user_if_not_exists() {
     debug "User '$username' already exists."
   else
     debug "Creating system user '$username' (group: '$primary_group', home: '$home_dir')..."
-    if ! getent group "$primary_group" &>/dev/null; then
-        warn "Primary group '$primary_group' for user '$username' does not appear to exist. User creation may fail or behave unexpectedly."
-    fi
+    # ... (existing useradd command) ...
     if ! run useradd -r -g "$primary_group" -d "$home_dir" -s /sbin/nologin -c "${APP_NAME} service account" "$username"; then
-        error_exit "CRITICAL FAILURE: Could not create system user '$username'. Check permissions, if 'useradd' is functional, and if group '$primary_group' exists." "$EXIT_CODE_FILE_ERROR"
+        error_exit "CRITICAL FAILURE: Could not create system user '$username'..." "$EXIT_CODE_FILE_ERROR"
     fi
     info "System user '$username' created successfully."
+  fi
+
+  # This is always safe to run. If the user is already in the group, it does nothing.
+  # This ensures the user can read journald logs for the health check feature.
+  info "Adding user '$username' to the 'systemd-journal' group for health check access..."
+  if ! run usermod -a -G systemd-journal "$username"; then
+    # This is not a fatal error, but the health check will not work.
+    warn "Failed to add user '$username' to 'systemd-journal' group. Automated health checks may fail due to permissions."
   fi
 }
 
@@ -501,6 +507,7 @@ deploy_systemd_units() {
   debug "Deploying systemd units to '$SYSTEMD_DIR'"
   ensure_directory "$SYSTEMD_DIR" "root" "root" "0755"
 
+  local installed_manage_services_path="${BASE_DIR}/bin/manage_services.sh"
   local sed_expressions_systemd=(
     -e "s|{{APP_NAME}}|${APP_NAME}|g"
     -e "s|{{APP_USER}}|${APP_USER}|g"
@@ -510,6 +517,7 @@ deploy_systemd_units() {
     -e "s|{{PYTHON_VENV_PATH}}|${PYTHON_VENV_PATH}|g"
     -e "s|{{BITMOVER_CONFIG_FILE}}|${BITMOVER_CONFIG_FILE}|g"
     -e "s|{{BITMOVER_LOG_DIR}}|${BITMOVER_LOG_DIR}|g"
+    -e "s|{{INSTALLED_MANAGER_SCRIPT_PATH}}|${installed_manage_services_path}|g"
     -e "s|{{INSTALLED_WRAPPER_SCRIPT_PATH}}|${INSTALLED_WRAPPER_SCRIPT_PATH}|g"
     -e "s|{{SOURCE_DATA_DIR}}|${SOURCE_DATA_DIR}|g"
     -e "s|{{CSV_DATA_DIR}}|${CSV_DATA_DIR}|g"
@@ -613,6 +621,12 @@ deploy_application_configs() {
 
 save_environment_variables_file() {
   debug "Saving base environment variables to '$BASE_VARS_FILE'"
+
+  # --- THIS IS THE CRITICAL LINE THAT WAS LIKELY MISSING ---
+  # It defines the variable before it is used below.
+  local installed_manage_services_path="${BASE_DIR}/bin/manage_services.sh"
+  # ---------------------------------------------------------
+
   local file_content
   file_content=$(cat <<EOF
 export APP_NAME="${APP_NAME}"
@@ -635,6 +649,10 @@ export BITMOVER_LOG_DIR="${BITMOVER_LOG_DIR}"
 export BITMOVER_CONFIG_FILE="${BITMOVER_CONFIG_FILE}"
 export REMOTE_HOST_URL="${REMOTE_HOST_URL}"
 export DEFAULT_CONFIGURE_INSTANCE_EXPORT_TIMEOUT="${EXPORT_TIMEOUT_CONFIG}"
+
+# --- These are the two new exports ---
+export HEALTH_CHECK_INTERVAL_MINS="${HEALTH_CHECK_INTERVAL_MINS_CONFIG:-5}"
+export INSTALLED_MANAGER_SCRIPT_PATH="${installed_manage_services_path}"
 EOF
 )
 

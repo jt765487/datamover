@@ -1,0 +1,12 @@
+[Unit]
+Description=Run health check for {{APP_NAME}} instance %i every minute
+
+[Timer]
+# Run 2 minutes after boot, and every 1 minute thereafter.
+# The delay on boot gives the main service time to start.
+OnBootSec=2min
+OnUnitActiveSec=1min
+Unit={{APP_NAME}}-healthcheck@%i.service
+
+[Install]
+WantedBy=timers.target

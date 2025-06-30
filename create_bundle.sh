@@ -374,12 +374,11 @@ all_files_ok=true
 declare -A expected_bundle_contents=(
     ["${DEPLOY_ORCHESTRATOR_SOURCE_NAME}"]="file"
     ["${PATCH_SCRIPT_NAME}"]="file"
-    ["${UNINSTALL_SCRIPT_NAME}"]="file" # uninstall.sh now in bundle root
+    ["${UNINSTALL_SCRIPT_NAME}"]="file"
     ["README.md"]="file"
     ["${DEPLOY_SUBDIR_NAME}/install_base_exportcliv2.sh"]="file"
     ["${DEPLOY_SUBDIR_NAME}/configure_instance.sh"]="file"
     ["${DEPLOY_SUBDIR_NAME}/manage_services.sh"]="file"
-    # uninstall.sh is no longer expected in DEPLOY_SUBDIR_NAME
     ["${DEPLOY_SUBDIR_NAME}/install-app.conf"]="file"
     ["${DEPLOY_SUBDIR_NAME}/${DATAMOVER_WHEEL_FILENAME}"]="file"
     ["${DEPLOY_SUBDIR_NAME}/config_files"]="dir"
@@ -391,6 +390,8 @@ declare -A expected_bundle_contents=(
     ["${DEPLOY_SUBDIR_NAME}/systemd_units/exportcliv2@.service.template"]="file"
     ["${DEPLOY_SUBDIR_NAME}/systemd_units/exportcliv2-restart@.path.template"]="file"
     ["${DEPLOY_SUBDIR_NAME}/systemd_units/exportcliv2-restart@.service.template"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/systemd_units/exportcliv2-healthcheck@.service.template"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/systemd_units/exportcliv2-healthcheck@.timer.template"]="file"
     ["${DEPLOY_SUBDIR_NAME}/${WHEELHOUSE_TARGET_SUBDIR_NAME}"]="dir"
 )
 if [[ -f "${EFFECTIVE_INSTALLER_SOURCE_DIR}/USER_GUIDE.md" ]]; then

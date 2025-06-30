@@ -153,7 +153,13 @@ main() {
         run_and_warn systemctl disable "${APP_NAME}@${instance_name}.service"
         run_and_warn systemctl stop "${APP_NAME}-restart@${instance_name}.path"
         run_and_warn systemctl disable "${APP_NAME}-restart@${instance_name}.path"
-        run_and_warn systemctl disable "${APP_NAME}-restart@${instance_name}.service" # This might show "no installation config" - acceptable
+        run_and_warn systemctl disable "${APP_NAME}-restart@${instance_name}.service"
+
+        # --- ADD THESE THREE LINES ---
+        info "Stopping and disabling health check timer for instance: $instance_name"
+        run_and_warn systemctl stop "${APP_NAME}-healthcheck@${instance_name}.timer"
+        run_and_warn systemctl disable "${APP_NAME}-healthcheck@${instance_name}.timer"
+        # ---------------------------
     done
 
     info "Processing main Bitmover service: $BITMOVER_SERVICE_NAME"
@@ -166,6 +172,10 @@ main() {
     run_and_warn rm -f "/etc/systemd/system/${APP_NAME}@.service"
     run_and_warn rm -f "/etc/systemd/system/${APP_NAME}-restart@.path"
     run_and_warn rm -f "/etc/systemd/system/${APP_NAME}-restart@.service"
+
+    info "Removing health check systemd units..."
+    run_and_warn rm -f "/etc/systemd/system/${APP_NAME}-healthcheck@.service"
+    run_and_warn rm -f "/etc/systemd/system/${APP_NAME}-healthcheck@.timer"
 
     info "Reloading systemd daemon..."
     run_and_warn systemctl daemon-reload

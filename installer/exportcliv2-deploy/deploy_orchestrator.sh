@@ -429,7 +429,26 @@ main() {
             info "--- Starting services for instance: $instance_name ---"
             if ! run "./${DEPLOY_SUBDIR_NAME}/manage_services.sh" "${manage_opts_install[@]}" -i "$instance_name" --start; then info "Failed to start services for instance '$instance_name'."; fi
         done
-        info "Instance service status: ./${DEPLOY_SUBDIR_NAME}/manage_services.sh -i \"INSTANCE_NAME\" --status"
+
+        info "--- Enabling automated health checks for instances ---"
+        # The base_vars file must have APP_NAME defined for this to work.
+        local app_name_from_base_vars
+                app_name_from_base_vars=$(grep -oP '(?<=^export APP_NAME=")[^"]+' "/etc/default/exportcliv2_base_vars" || echo "")
+        if [[ -z "$app_name_from_base_vars" ]]; then
+            warn "Could not determine APP_NAME to enable health check timers. Skipping."
+        else
+            for instance_name in "${PARSED_INSTANCE_NAMES[@]}"; do
+                # Only enable the timer if the configured interval is greater than 0
+                local health_check_interval_from_config="${HEALTH_CHECK_INTERVAL_MINS_CONFIG:-5}"
+                if (( health_check_interval_from_config > 0 )); then
+                    info "--- Enabling health check timer for instance: $instance_name ---"
+                    if ! run systemctl enable "${app_name_from_base_vars}-healthcheck@${instance_name}.timer"; then info "Failed to enable health check timer for '$instance_name'."; fi
+                    if ! run systemctl start "${app_name_from_base_vars}-healthcheck@${instance_name}.timer"; then info "Failed to start health check timer for '$instance_name'."; fi
+                else
+                    info "--- Skipping health check for instance '$instance_name' as interval is set to 0 ---"
+                fi
+            done
+        fi
     fi
     info "Service setup attempts complete."
 

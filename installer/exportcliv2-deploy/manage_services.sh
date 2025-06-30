@@ -182,6 +182,28 @@ enforce_root() {
   fi
 }
 
+_trigger_instance_restart() {
+    local instance_name="$1"
+    if [[ -z "$instance_name" ]]; then
+        warn "_trigger_instance_restart called without an instance name."
+        return 1
+    fi
+
+    # CSV_DATA_DIR is already sourced from BASE_VARS_FILE.
+    if [[ -z "${CSV_DATA_DIR:-}" ]]; then
+        error_exit "CSV_DATA_DIR is not defined. Cannot determine path for restart trigger file." "$EXIT_CODE_CONFIG_ERROR"
+    fi
+
+    local restart_trigger_file="${CSV_DATA_DIR%/}/${instance_name}.restart"
+
+    if [[ -e "$restart_trigger_file" ]]; then
+        info "Restart for instance '${instance_name}' has already been triggered. Skipping."
+    else
+        warn "Instance '${instance_name}' is unhealthy. Triggering restart via file: ${restart_trigger_file}"
+        run touch "$restart_trigger_file"
+    fi
+}
+
 # --- Argument Parsing (Standardized to while/case) ---
 usage() {
   HELP_OR_VERSION_EXIT=true
@@ -212,6 +234,8 @@ Actions (one is required):
   --enable              Enable service(s) to start at boot.
   --disable             Disable service(s) from starting at boot.
   --reset-failed        Reset 'failed' state for service(s) in systemd.
+  --run-health-check    (Internal) Run a health check for an instance. If unhealthy,
+                        triggers a restart. Used by the systemd timer.
 
 Examples:
   sudo $script_name --start                    # Starts the global $BITMOVER_SERVICE_NAME
@@ -249,6 +273,9 @@ while [[ $# -gt 0 ]]; do
     --status|--check)
       if [[ -n "$ACTION_FLAG" ]]; then error_exit "Multiple actions ('$ACTION_FLAG' and 'status') not allowed." "$EXIT_CODE_USAGE_ERROR"; fi
       ACTION_FLAG="status"; shift;;
+    --run-health-check)
+      if [[ -n "$ACTION_FLAG" ]]; then error_exit "Multiple actions ('$ACTION_FLAG' and 'run-health-check') not allowed." "$EXIT_CODE_USAGE_ERROR"; fi
+      ACTION_FLAG="run-health-check"; shift;;
     *)
       TEMP_ARGS+=("$1"); shift;;
   esac
@@ -332,6 +359,42 @@ info "Performing '$ACTION_FLAG' on $TARGET_DESC (Dry-run: $DRY_RUN)"
 
 # --- Dispatch Actions ---
 case "$ACTION_FLAG" in
+run-health-check)
+    SCRIPT_SUCCESSFUL=true # Assume success unless a check fails
+    if [[ "$MODE" != "instance" ]]; then
+        error_exit "--run-health-check requires an instance name (-i)." "$EXIT_CODE_USAGE_ERROR"
+    fi
+
+    info "Running health check for instance '${INSTANCE_NAME}'..."
+
+    if [[ -z "${HEALTH_CHECK_INTERVAL_MINS:-}" || ! "$HEALTH_CHECK_INTERVAL_MINS" =~ ^[0-9]+$ || "$HEALTH_CHECK_INTERVAL_MINS" -le 0 ]]; then
+        info "Health check is disabled or interval is invalid (HEALTH_CHECK_INTERVAL_MINS='${HEALTH_CHECK_INTERVAL_MINS:-}'). Skipping."
+        exit "$EXIT_CODE_SUCCESS"
+    fi
+
+    if ! systemctl is-active --quiet "$MAIN_SERVICE_UNIT"; then
+        status=$(systemctl is-active "$MAIN_SERVICE_UNIT") || true
+        warn "Health check FAILED for '${INSTANCE_NAME}'. Service is not active (state: ${status})."
+        _trigger_instance_restart "$INSTANCE_NAME"
+        exit "$EXIT_CODE_SUCCESS"
+    fi
+    debug "Service '${MAIN_SERVICE_UNIT}' is active. Now checking for log activity."
+
+    health_check_window="${HEALTH_CHECK_INTERVAL_MINS} minutes ago" # <-- FIX: 'local' removed
+    info "Checking for log entries within the last ${HEALTH_CHECK_INTERVAL_MINS} minutes..."
+
+    journal_cmd_array=(journalctl -u "$MAIN_SERVICE_UNIT" --since "$health_check_window" --no-pager --quiet --output=cat) # <-- FIX: 'local' removed
+
+    if [[ "$DRY_RUN" == true ]]; then
+        info "[DRY-RUN] Would check for logs with: ${journal_cmd_array[*]}"
+        info "[DRY-RUN] Would trigger restart if no logs were found."
+    elif ! "${journal_cmd_array[@]}" | grep -q .; then
+        warn "Health check FAILED for '${INSTANCE_NAME}'. Service is active but has produced NO log entries since '${health_check_window}'."
+        _trigger_instance_restart "$INSTANCE_NAME"
+    else
+        info "Health check PASSED for '${INSTANCE_NAME}'. Service is active and has recent log entries."
+    fi
+    ;;
   start)
     run systemctl start "$MAIN_SERVICE_UNIT"
     for unit in "${PATH_SERVICE_UNITS[@]}"; do run systemctl start "$unit"; done

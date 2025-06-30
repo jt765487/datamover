@@ -1,0 +1,20 @@
+[Unit]
+Description=Health check for {{APP_NAME}} instance %i
+# This should not run until after the main service is up.
+After={{APP_NAME}}@%i.service
+
+[Service]
+Type=oneshot
+# Run as the application user to ensure it can access config files
+# and has permission to create the .restart trigger file.
+User={{APP_USER}}
+Group={{APP_GROUP}}
+
+# This is the core of the check. It calls the manage_services.sh script,
+# which is already installed in the application's bin directory.
+ExecStart={{INSTALLED_MANAGER_SCRIPT_PATH}} -i %i --run-health-check
+
+# Log the output of the health check itself to the journal for debugging.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{APP_NAME}}-healthcheck@%i

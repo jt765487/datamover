@@ -1,8 +1,10 @@
-## Application Suite Deployment and Management Guide (v1.0.5)
+## Application Suite Deployment and Management Guide (v1.0.6)
 
 This guide provides comprehensive instructions for deploying, configuring, updating, and managing the "exportcliv2"
 application suite (v1.0.0). This suite includes the main `exportcliv2` data export client and the Bitmover service (a
 Python-based service responsible for PCAP uploads and disk space management).
+Additionally, the suite includes an automatic health-monitoring system for `exportcliv2` instances to ensure high
+availability by detecting and restarting unresponsive processes.
 
 ## Table of Contents:
 
@@ -49,7 +51,7 @@ All installation, patching, and service management commands in this guide **must
 The `exportcliv2` application suite (v1.0.0) is designed for robust data processing and management. It consists of:
 
 * **`exportcliv2` client:** A high-performance data processing application (e.g., binary version
-  `exportcliv2-.4.0-B1771-24.11.15`). This core binary is provided by an external supplier and has its own versioning
+  `exportcliv2-v0.4.0-B1771-24.11.15`). This core binary is provided by an external supplier and has its own versioning
   scheme. The overall application suite, including supporting scripts and the Bitmover service, is versioned
   independently (e.g., `v1.0.0`). The `exportcliv2` client is typically run as multiple instances, each configured for a
   specific data source or task.
@@ -88,7 +90,7 @@ exportcliv2-suite-v1.0.0/
     │
     ├── install-app.conf         # Primary configuration for the installer scripts in this bundle
     │
-    ├── exportcliv2-.4.0-B1771-24.11.15 # Example: The versioned exportcliv2 binary
+    ├── exportcliv2-v0.4.0-B1771-24.11.15 # Example: The versioned exportcliv2 binary
     ├── datamover-1.0.0-py3-none-any.whl  # Example: The versioned Python wheel for Bitmover
     │   # (Other binaries like an emulator 'exportcliv8' might also be present if included during bundling)
     │
@@ -101,7 +103,9 @@ exportcliv2-suite-v1.0.0/
     │   ├── bitmover.service.template
     │   ├── exportcliv2@.service.template
     │   ├── exportcliv2-restart@.path.template
-    │   └── exportcliv2-restart@.service.template
+    │   ├── exportcliv2-restart@.service.template
+    │   ├── exportcliv2-healthcheck@.service.template
+    │   └── exportcliv2-healthcheck@.timer.template
     │
     └── wheelhouse/              # Offline Python dependency wheels
         └── ...
@@ -264,6 +268,9 @@ especially the creation and mounting of the dedicated ext4 filesystem at the pat
    This step also deploys the default `/etc/exportcliv2/config.ini` which includes initial settings for the Bitmover
    service's Purger component.
 
+This process also installs and enables a periodic health check for each `exportcliv2` instance. The health check
+automatically monitors the instance and triggers a restart if it becomes unresponsive (i.e., stops logging).
+
 ---
 
 ## 7. Step 4: Post-Installation Instance Configuration (Live System)
@@ -346,6 +353,14 @@ effect:
    ```
    Look for `Active: active (running)` for `exportcliv2@AAA.service`.
 
+3. **Check the Health Check Timer status (Optional):**
+   To verify that the automatic health monitoring is scheduled, you can list the active timers for the application:
+     ```bash
+     systemctl list-timers 'exportcliv2-healthcheck@*.timer'
+     ```
+   You should see an entry for each instance (e.g., `exportcliv2-healthcheck@AAA.timer`), indicating when it will next
+   run.
+
 ---
 
 ## 10. Step 7: Understanding Key System Directories and Files
@@ -358,7 +373,7 @@ path should correspond to your dedicated ext4 filesystem mount point.
 
 * **Base Application Directory:** (Default: `/opt/bitmover/`). Check `BASE_DIR` in `/etc/default/exportcliv2_base_vars`.
   This **must** be on your dedicated ext4 filesystem.
-    * `bin/`: Contains executables (e.g., `exportcliv2-.4.0-B1771-24.11.15`), the `exportcliv2` symlink pointing to
+    * `bin/`: Contains executables (e.g., `exportcliv2-v0.4.0-B1771-24.11.15`), the `exportcliv2` symlink pointing to
       the active binary, helper scripts like `run_exportcliv2_instance.sh` and `manage_services.sh`.
     * `csv/`: For CSV metadata files (e.g., `AAA.csv`) and `.restart` trigger files.
     * `datamover_venv/`: Python virtual environment for the Bitmover service.
@@ -527,6 +542,28 @@ Use `exportcli-manage` or view files directly.
       permissions to query disk usage for the filesystem containing the `base_dir` specified in `config.ini` (this
       `base_dir` is where `uploaded_dir` resides, which is used for detection). Errors during auto-detection will be
       logged at service startup in `app.log.jsonl` and may prevent the service from starting correctly.
+7. **Instance Health Check and Auto-Restart Issues:**
+   The system includes an automatic health check that restarts an `exportcliv2` instance if it detects it has become
+   unresponsive.
+    * **How it works:** A systemd timer (`exportcliv2-healthcheck@.timer`) periodically runs a service (
+      `exportcliv2-healthcheck@.service`). This service executes `exportcli-manage --run-health-check`, which checks if
+      the main instance service has logged anything recently. If not, it triggers a restart.
+    * **Check health check logs:** To see the health check's own activity (e.g., "PASSED" or "FAILED" messages), run:
+      ```bash
+      journalctl -u exportcliv2-healthcheck@<INSTANCE_NAME>.service
+      ```
+    * **Check timer and service status:** To see when the timer will next run or when the check last ran, use:
+      ```bash
+      systemctl status exportcliv2-healthcheck@<INSTANCE_NAME>.timer
+      systemctl status exportcliv2-healthcheck@<INSTANCE_NAME>.service
+      ```
+    * **Configure or Disable:** The health check is controlled by the `HEALTH_CHECK_INTERVAL_MINS` variable in
+      `/etc/default/exportcliv2_base_vars`. To change the check frequency, edit this value. **To disable the health
+      check, set this value to `0`.**
+    * **Frequent Restarts:** If you see in the logs that an instance is being restarted frequently by the health check,
+      it indicates an underlying problem with the `exportcliv2` application itself. The health check is functioning
+      correctly by detecting the problem; you should investigate the main application logs (
+      `exportcli-manage -i <INSTANCE_NAME> --logs`) for errors that might be causing it to freeze or crash.
 
 ---
 
@@ -544,13 +581,13 @@ values derived during installation (many from `/etc/default/exportcliv2_base_var
 subsequently the `install_base_exportcliv2.sh` scripts for initial setup or updates.)*
 
 ```ini
-# exportcliv2-deploy/install-app.conf (Defaults for v1.0.0 bundle)
+# install-app.conf
 
 # Space-separated list of instance names.
 DEFAULT_INSTANCES_CONFIG = "AAA"
 
 # The filename of the VERSIONED main application binary.
-VERSIONED_APP_BINARY_FILENAME = "exportcliv2-.4.0-B1771-24.11.15"
+VERSIONED_APP_BINARY_FILENAME = "exportcliv2-v0.4.0-B1771-24.11.15"
 
 # The filename of the VERSIONED DataMover Python wheel.
 VERSIONED_DATAMOVER_WHEEL_FILENAME = "datamover-1.0.0-py3-none-any.whl"
@@ -562,6 +599,12 @@ REMOTE_HOST_URL_CONFIG = "http://192.168.0.180:8989/pcap"
 # Timeout (-t) in seconds for exportcliv2 instances.
 EXPORT_TIMEOUT_CONFIG = "15"
 
+# Health Check: Interval in minutes to check if an instance of the exportcliv2 is alive.
+# If an instance has not logged anything to the journal in this time,
+# it is considered locked and will be automatically restarted.
+# Set to 0 to disable this feature.
+HEALTH_CHECK_INTERVAL_MINS_CONFIG = "5"
+
 # The user name for the service.
 USER_CONFIG = "exportcliv2_user"
 
@@ -569,21 +612,20 @@ USER_CONFIG = "exportcliv2_user"
 GROUP_CONFIG = "exportcliv2_group"
 
 # BASE_DIR_CONFIG: Overrides the default base installation directory.
-# This path MUST correspond to your prepared and mounted dedicated ext4 filesystem.
 BASE_DIR_CONFIG = "/opt/bitmover"
 
 # WHEELHOUSE_SUBDIR: Subdirectory containing dependency wheels for offline Python package installation.
 WHEELHOUSE_SUBDIR = "wheelhouse"
 
-# LOG_DIR_CONFIG: Base directory for application suite logs (e.g., /var/log/exportcliv2/).
-# Subdirectories like 'bitmover/' for Bitmover service logs and 'INSTANCE_NAME/'
-# (managed by systemd for exportcliv2 instance logs) will be created or expected under this path.
+# LOG_DIR_CONFIG: Base directory for application suite logs.
 LOG_DIR_CONFIG = "/var/log/exportcliv2/"
 ```
 
 **Key Points:**
 
 * `DEFAULT_INSTANCES_CONFIG` drives which instances are set up by `deploy_orchestrator.sh --install` if not overridden.
+* `HEALTH_CHECK_INTERVAL_MINS_CONFIG` configures the automatic health monitoring for instances. This value is written by
+  the installer to `/etc/default/exportcliv2_base_vars` as `HEALTH_CHECK_INTERVAL_MINS`.
 * `VERSIONED_APP_BINARY_FILENAME`, `VERSIONED_DATAMOVER_WHEEL_FILENAME`, and `WHEELHOUSE_SUBDIR` are set by the
   `create_bundle.sh` script to match the files included in the `exportcliv2-deploy/` directory of the bundle.
 * `REMOTE_HOST_URL_CONFIG`, `EXPORT_TIMEOUT_CONFIG`, `USER_CONFIG`, `GROUP_CONFIG`, `BASE_DIR_CONFIG`, and
@@ -736,7 +778,7 @@ exit $?
   the `INDEFINITE_RUN_ARG` variable. It is not configurable via instance environment files.**
 * Constructs command arguments in a bash array for robustness.
 * Logs a sanitized version of the command, masking sensitive credentials (`-u` and `-p` arguments).
-* Uses `exec` to run the actual `exportcliv2` binary, replacing the wrapper script process.
+* Uses `exec` to run the actual `exportcliv2` binary, a process that replaces the wrapper script.
 * Placeholders like `{{APP_NAME}}`, `{{ETC_DIR}}`, `{{CSV_DATA_DIR}}`, `{{SOURCE_DATA_DIR}}`,
   `{{SYMLINK_EXECUTABLE_PATH}}` are replaced by `install_base_exportcliv2.sh` during deployment.
 
@@ -1035,6 +1077,46 @@ The paths `{{SOURCE_DATA_DIR}}`, `{{CSV_DATA_DIR}}`, etc., within the service un
    StandardOutput=journal
    StandardError=journal
    SyslogIdentifier={{APP_NAME}}-restart@%i
+   ```
+
+5. **`exportcliv2-healthcheck@.service.template`:**
+    * A one-shot service that runs the `manage_services.sh` script with the `--run-health-check` action.
+    * It is triggered by the corresponding timer unit.
+    * Its purpose is to evaluate the health of a running `exportcliv2` instance.
+   ```systemd
+   [Unit]
+   Description=Health check for {{APP_NAME}} instance %i
+   After={{APP_NAME}}@%i.service
+
+   [Service]
+   Type=oneshot
+   User={{APP_USER}}
+   Group={{APP_GROUP}}
+   ExecStart={{INSTALLED_MANAGER_SCRIPT_PATH}} -i %i --run-health-check
+   StandardOutput=journal
+   StandardError=journal
+   SyslogIdentifier={{APP_NAME}}-healthcheck@%i
+   ```
+
+6. **`exportcliv2-healthcheck@.timer.template`:**
+    * A timer unit that periodically triggers the health check service.
+    * By default, it starts 2 minutes after boot and then runs every minute. This ensures the main service has time to
+      start up before the first check.
+    * The frequency of subsequent checks (`OnUnitActiveSec`) is frequent, but the actual logic is controlled by
+      `HEALTH_CHECK_INTERVAL_MINS` inside the script.
+   ```systemd
+   [Unit]
+   Description=Run health check for {{APP_NAME}} instance %i every minute
+
+   [Timer]
+   # Run 2 minutes after boot, and every 1 minute thereafter.
+   # The delay on boot gives the main service time to start.
+   OnBootSec=2min
+   OnUnitActiveSec=1min
+   Unit={{APP_NAME}}-healthcheck@%i.service
+
+   [Install]
+   WantedBy=timers.target
    ```
 
 ---
