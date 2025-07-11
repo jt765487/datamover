@@ -385,6 +385,7 @@ declare -A expected_bundle_contents=(
     ["${DEPLOY_SUBDIR_NAME}/config_files/common.auth.conf"]="file"
     ["${DEPLOY_SUBDIR_NAME}/config_files/config.ini.template"]="file"
     ["${DEPLOY_SUBDIR_NAME}/config_files/run_exportcliv2_instance.sh.template"]="file"
+    ["${DEPLOY_SUBDIR_NAME}/config_files/app.conf.template"]="file"
     ["${DEPLOY_SUBDIR_NAME}/systemd_units"]="dir"
     ["${DEPLOY_SUBDIR_NAME}/systemd_units/bitmover.service.template"]="file"
     ["${DEPLOY_SUBDIR_NAME}/systemd_units/exportcliv2@.service.template"]="file"
