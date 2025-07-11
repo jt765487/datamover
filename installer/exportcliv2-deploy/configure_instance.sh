@@ -7,8 +7,9 @@ IFS=$'\n\t'
 # Instance Configurator for exportcliv2
 # Standardized argument parsing, logging, dry-run, error handling.
 # Aligned with orchestrator's --force flag.
+# v4.2.0: Use app.conf.template instead of hardcoded app config.
 # -----------------------------------------------------------------------------
-VERSION_CONFIGURE_INSTANCE="4.1.0" # Script version
+VERSION_CONFIGURE_INSTANCE="4.2.0" # Script version
 
 # --- Colorized Logging (Standardized) ---
 CSI=$'\033['
@@ -103,7 +104,8 @@ This script MUST be run as root or with sudo.
 
 It creates two configuration files per instance in ${determined_etc_dir_desc}:
   1. <INSTANCE_NAME>.conf: Environment variables for the wrapper script.
-  2. <INSTANCE_NAME>_app.conf: Config file passed via -c to the main binary.
+  2. <INSTANCE_NAME>_app.conf: Config file passed via -c to the main binary. This file
+                             is now copied from 'config_files/app.conf.template'.
 
 Required:
   -i, --instance NAME       Name for this instance (e.g., "lab1", "prod_main").
@@ -111,8 +113,7 @@ Required:
 Options:
   --config-source-env-file PATH
                             Optional: Path to a pre-existing environment configuration file
-                            (<INSTANCE_NAME>.conf) to copy. The <INSTANCE_NAME>_app.conf
-                            will still be generated with defaults.
+                            (<INSTANCE_NAME>.conf) to copy.
   --force                   Optional: Overwrite existing instance configuration file(s)
                             (both <INSTANCE_NAME>.conf and <INSTANCE_NAME>_app.conf).
   -n, --dry-run             Dry-run mode (print commands instead of executing).
@@ -174,8 +175,13 @@ if [[ "$(id -u)" -ne 0 ]]; then
   error_exit "This script must be run as root or with sudo." "$EXIT_CODE_PREREQUISITE_ERROR"
 fi
 
+# <<< ADDED >>> Determine script directory to find templates
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+debug "Script directory determined as: $SCRIPT_DIR"
+
 # --- Pre-flight check for required commands ---
-required_commands=(getent install date id basename chmod chown printf mkdir realpath) # Added realpath
+required_commands=(getent install date id basename chmod chown printf mkdir realpath)
 debug "Checking for required commands: ${required_commands[*]}"
 for cmd in "${required_commands[@]}"; do
   command -v "$cmd" &>/dev/null || error_exit "Required command \"${cmd}\" not found." "$EXIT_CODE_PREREQUISITE_ERROR"
@@ -205,13 +211,23 @@ readonly TARGET_CONF_DIR="$ETC_DIR" # e.g. /etc/exportcliv2
 readonly TARGET_ENV_CONF_FILE="${TARGET_CONF_DIR}/${INSTANCE}.conf"
 readonly APP_SPECIFIC_CONFIG_FILENAME="${INSTANCE}_app.conf"
 readonly TARGET_APP_SPECIFIC_CONFIG_FILE="${TARGET_CONF_DIR}/${APP_SPECIFIC_CONFIG_FILENAME}"
+# <<< ADDED >>> Define path to the new template file
+readonly APP_CONFIG_TEMPLATE_PATH="${SCRIPT_DIR}/config_files/app.conf.template"
+
+# <<< ADDED >>> Pre-flight check for the new template file
+if [[ ! -f "$APP_CONFIG_TEMPLATE_PATH" ]]; then
+    error_exit "Application config template not found at: '${APP_CONFIG_TEMPLATE_PATH}'" "$EXIT_CODE_CONFIG_ERROR"
+fi
+debug "Found application config template: '${APP_CONFIG_TEMPLATE_PATH}'"
+
 
 # --- Define Defaults for Generated Configs ---
 readonly DEFAULT_EXPORT_IP="10.0.0.1" # Example
 readonly DEFAULT_EXPORT_PORTID="1"    # Example
 readonly DEFAULT_EXPORT_STARTTIME_OFFSET_SPEC="3 minutes ago"
 readonly DEFAULT_EXPORT_ENDTIME_VALUE="-1"
-readonly DEFAULT_APP_CONFIG_CONTENT="mining_delta_sec=120" # Example content
+# <<< REMOVED >>> The hardcoded config content is no longer needed.
+# readonly DEFAULT_APP_CONFIG_CONTENT="mining_delta_sec=120" # Example content
 
 # --- Helper Functions for File Operations (Simplified to use 'run') ---
 _manage_file_permissions() {
@@ -228,6 +244,16 @@ ensure_config_directory() {
     run install -d -o root -g "${APP_GROUP}" -m0755 "${dir_path}" \
         || error_exit "Failed to create/set perms for directory \"${dir_path}\"." "$EXIT_CODE_FILE_ERROR"
 }
+
+# <<< ADDED >>> New helper function specifically for installing template files
+install_template_file() {
+    local src_template="$1"; local dest_file="$2"; local owner="$3"; local group="$4"; local perms="$5"; local file_description="$6"
+    debug "Installing ${file_description} from template '${src_template}' to '${dest_file}'"
+    run install -T -o "$owner" -g "$group" -m "$perms" "$src_template" "$dest_file" \
+        || error_exit "Failed to install ${file_description} from template '${src_template}' to '${dest_file}'." "$EXIT_CODE_FILE_ERROR"
+    debug "Successfully installed ${file_description} to '${dest_file}'."
+}
+
 
 copy_source_env_file() {
     local src_file="$1"; local dest_file="$2"; local owner="$3"; local group="$4"; local perms="$5"
@@ -301,16 +327,18 @@ EOF
       write_generated_file_content "$generated_env_content" "$TARGET_ENV_CONF_FILE" "root" "$APP_GROUP" "0640" "environment configuration"
     fi
 
-    write_generated_file_content "$DEFAULT_APP_CONFIG_CONTENT" "$TARGET_APP_SPECIFIC_CONFIG_FILE" "root" "$APP_GROUP" "0640" "application-specific configuration"
+    # <<< MODIFIED >>> Use the new function to copy the template
+    install_template_file "$APP_CONFIG_TEMPLATE_PATH" "$TARGET_APP_SPECIFIC_CONFIG_FILE" "root" "$APP_GROUP" "0640" "application-specific configuration"
 
     info "Instance configuration for \"${INSTANCE}\" processing complete."
     info "  Environment config (for wrapper): \"${TARGET_ENV_CONF_FILE}\""
-    info "  Application config (for -c arg):  \"${TARGET_APP_SPECIFIC_CONFIG_FILE}\""
+    info "  Application config (for -c arg):  \"${TARGET_APP_SPECIFIC_CONFIG_FILE}\" (copied from template)"
     if [[ -z "$CONFIG_SRC_ENV_FILE" ]]; then
       info "Default configurations were generated. Please review and edit them as needed:"
       info "    - ${TARGET_ENV_CONF_FILE} (especially EXPORT_IP, EXPORT_PORTID)"
     fi
-    info "    - Review ${TARGET_APP_SPECIFIC_CONFIG_FILE} if '${DEFAULT_APP_CONFIG_CONTENT%%=*}' needs adjustment."
+    # <<< MODIFIED >>> Updated info message
+    info "    - Review ${TARGET_APP_SPECIFIC_CONFIG_FILE} if its templated content needs instance-specific adjustment."
 
     # Final heredoc summary
     local main_service_name="${APP_NAME}@${INSTANCE}.service" # Moved into main, as APP_NAME comes from sourced file
@@ -338,7 +366,7 @@ To manage this instance ('${INSTANCE}') manually, use 'exportcli-manage':
 -----------------------------------------------------------------------------
 Remember to review/edit the generated configuration files as needed:
   - ${TARGET_ENV_CONF_FILE} (especially EXPORT_IP, EXPORT_PORTID)
-  - ${TARGET_APP_SPECIFIC_CONFIG_FILE} (if instance-specific app settings are required)
+  - ${TARGET_APP_SPECIFIC_CONFIG_FILE} (which is now based on a template)
 -----------------------------------------------------------------------------
 EOF
     SCRIPT_SUCCESSFUL=true
